@@ -554,6 +554,7 @@ async fn proxy_claude_auto_failover_uses_activated_queue_providers() {
         .get_proxy_config_for_app("claude")
         .await
         .expect("read claude app proxy config");
+    app_proxy.enabled = true;
     app_proxy.auto_failover_enabled = true;
     db.update_proxy_config_for_app(app_proxy)
         .await
@@ -687,6 +688,7 @@ async fn proxy_claude_successful_failover_syncs_current_provider_and_status() {
         .get_proxy_config_for_app("claude")
         .await
         .expect("read claude app proxy config");
+    app_proxy.enabled = true;
     app_proxy.auto_failover_enabled = true;
     db.update_proxy_config_for_app(app_proxy)
         .await
@@ -824,6 +826,7 @@ async fn proxy_claude_failed_failover_keeps_state_unsynced() {
         .get_proxy_config_for_app("claude")
         .await
         .expect("read claude app proxy config");
+    app_proxy.enabled = true;
     app_proxy.auto_failover_enabled = true;
     app_proxy.max_retries = 0;
     db.update_proxy_config_for_app(app_proxy)
