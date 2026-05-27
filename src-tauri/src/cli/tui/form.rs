@@ -22,10 +22,8 @@ pub(crate) use codex_config::parse_codex_config_snippet;
 pub(crate) use provider_json::claude_hide_attribution_enabled;
 pub(crate) use provider_json::strip_common_config_from_settings;
 pub(crate) use provider_json::{normalize_usage_interval, normalize_usage_timeout};
+pub(crate) use provider_state::detect_balance_provider_for_usage_query;
 pub(crate) use provider_state::resolve_provider_id_for_submit;
-pub(crate) use provider_state::{
-    detect_balance_provider_for_usage_query, detect_coding_plan_provider_for_usage_query,
-};
 
 pub const OPENCLAW_DEFAULT_API_PROTOCOL: &str = "openai-completions";
 pub const OPENCLAW_DEFAULT_USER_AGENT: &str =
@@ -228,8 +226,6 @@ pub enum UsageQueryTemplate {
     Custom,
     General,
     NewApi,
-    GitHubCopilot,
-    TokenPlan,
     Balance,
 }
 
@@ -243,7 +239,6 @@ pub enum UsageQueryField {
     UserId,
     Timeout,
     AutoInterval,
-    CodingPlanProvider,
     Script,
 }
 
@@ -345,7 +340,6 @@ pub struct ProviderAddFormState {
     pub usage_query_timeout: TextInput,
     pub usage_query_auto_interval: TextInput,
     pub usage_query_code: String,
-    pub usage_query_coding_plan_provider: TextInput,
     pub opencode_npm_package: TextInput,
     pub opencode_api_key: TextInput,
     pub opencode_base_url: TextInput,

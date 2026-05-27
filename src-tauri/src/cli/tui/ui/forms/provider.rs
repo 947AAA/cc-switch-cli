@@ -548,7 +548,7 @@ fn render_usage_query_side_panel(
 ) {
     let extractor_available = provider.usage_query_extractor_available();
     if !extractor_available {
-        render_usage_query_info_panel(frame, provider, area, theme);
+        render_usage_query_info_panel(frame, area, theme);
         return;
     }
 
@@ -571,12 +571,7 @@ fn render_usage_query_side_panel(
     );
 }
 
-fn render_usage_query_info_panel(
-    frame: &mut Frame<'_>,
-    provider: &super::form::ProviderAddFormState,
-    area: Rect,
-    theme: &super::theme::Theme,
-) {
+fn render_usage_query_info_panel(frame: &mut Frame<'_>, area: Rect, theme: &super::theme::Theme) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -585,23 +580,8 @@ fn render_usage_query_info_panel(
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
-    let hint = match provider.usage_query_template {
-        super::form::UsageQueryTemplate::GitHubCopilot => {
-            texts::tui_usage_query_copilot_auto_auth()
-        }
-        super::form::UsageQueryTemplate::TokenPlan => texts::tui_usage_query_token_plan_hint(),
-        super::form::UsageQueryTemplate::Custom
-        | super::form::UsageQueryTemplate::General
-        | super::form::UsageQueryTemplate::NewApi
-        | super::form::UsageQueryTemplate::Balance => "",
-    };
-
     frame.render_widget(
-        Paragraph::new(Line::styled(
-            hint.to_string(),
-            Style::default().fg(theme.comment),
-        ))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(Line::default()).wrap(Wrap { trim: false }),
         inner,
     );
 }
@@ -760,9 +740,6 @@ pub(crate) fn usage_query_field_label_and_value(
         }
         super::form::UsageQueryField::AutoInterval => {
             texts::tui_usage_query_auto_interval().to_string()
-        }
-        super::form::UsageQueryField::CodingPlanProvider => {
-            texts::tui_usage_query_coding_plan_provider().to_string()
         }
         super::form::UsageQueryField::Script => texts::tui_usage_query_script().to_string(),
     };

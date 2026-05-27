@@ -150,7 +150,6 @@ impl ProviderAddFormState {
             usage_query_timeout: TextInput::new("10"),
             usage_query_auto_interval: TextInput::new("5"),
             usage_query_code: Self::USAGE_QUERY_GENERAL_PRESET.to_string(),
-            usage_query_coding_plan_provider: TextInput::new("kimi"),
             opencode_npm_package: TextInput::new(openclaw_api_default),
             opencode_api_key: TextInput::new(""),
             opencode_base_url: TextInput::new(""),
@@ -401,21 +400,11 @@ impl ProviderAddFormState {
                     UsageQueryField::Script,
                 ]);
             }
-            UsageQueryTemplate::GitHubCopilot => {
-                fields.extend([UsageQueryField::Timeout, UsageQueryField::AutoInterval]);
-            }
             UsageQueryTemplate::Balance => {
                 fields.extend([
                     UsageQueryField::Timeout,
                     UsageQueryField::AutoInterval,
                     UsageQueryField::Script,
-                ]);
-            }
-            UsageQueryTemplate::TokenPlan => {
-                fields.extend([
-                    UsageQueryField::CodingPlanProvider,
-                    UsageQueryField::Timeout,
-                    UsageQueryField::AutoInterval,
                 ]);
             }
         }
@@ -536,7 +525,6 @@ impl ProviderAddFormState {
             UsageQueryField::UserId => Some(&self.usage_query_user_id),
             UsageQueryField::Timeout => Some(&self.usage_query_timeout),
             UsageQueryField::AutoInterval => Some(&self.usage_query_auto_interval),
-            UsageQueryField::CodingPlanProvider => Some(&self.usage_query_coding_plan_provider),
             UsageQueryField::Enabled | UsageQueryField::Template | UsageQueryField::Script => None,
         }
     }
@@ -549,7 +537,6 @@ impl ProviderAddFormState {
             UsageQueryField::UserId => Some(&mut self.usage_query_user_id),
             UsageQueryField::Timeout => Some(&mut self.usage_query_timeout),
             UsageQueryField::AutoInterval => Some(&mut self.usage_query_auto_interval),
-            UsageQueryField::CodingPlanProvider => Some(&mut self.usage_query_coding_plan_provider),
             UsageQueryField::Enabled | UsageQueryField::Template | UsageQueryField::Script => None,
         }
     }
@@ -569,25 +556,13 @@ impl ProviderAddFormState {
             return;
         }
 
-        let template = match self
-            .extra
-            .get("meta")
-            .and_then(|meta| meta.get("providerType"))
-            .and_then(|value| value.as_str())
-        {
-            Some("github_copilot") => UsageQueryTemplate::GitHubCopilot,
-            _ if detect_balance_provider_for_usage_query(&self.current_provider_base_url()) => {
-                UsageQueryTemplate::Balance
-            }
-            _ => UsageQueryTemplate::General,
-        };
+        let template =
+            match detect_balance_provider_for_usage_query(&self.current_provider_base_url()) {
+                true => UsageQueryTemplate::Balance,
+                _ => UsageQueryTemplate::General,
+            };
 
         self.set_usage_query_template(template);
-        if let Some(provider) =
-            detect_coding_plan_provider_for_usage_query(&self.current_provider_base_url())
-        {
-            self.usage_query_coding_plan_provider.set(provider);
-        }
     }
 
     pub fn close_usage_query_page(&mut self) {
@@ -784,17 +759,6 @@ impl ProviderAddFormState {
             .copied()
     }
 
-    pub fn cycle_usage_query_coding_plan_provider(&mut self) {
-        let options = ["kimi", "zhipu", "minimax"];
-        let current = options
-            .iter()
-            .position(|value| *value == self.usage_query_coding_plan_provider.value.trim())
-            .unwrap_or(0);
-        self.usage_query_coding_plan_provider
-            .set(options[(current + 1) % options.len()]);
-        self.touch_usage_query();
-    }
-
     pub fn available_usage_query_templates(&self) -> Vec<UsageQueryTemplate> {
         vec![
             UsageQueryTemplate::Custom,
@@ -823,27 +787,12 @@ impl ProviderAddFormState {
                 self.usage_query_code = Self::USAGE_QUERY_NEWAPI_PRESET.to_string();
                 self.usage_query_api_key.set("");
             }
-            UsageQueryTemplate::GitHubCopilot | UsageQueryTemplate::Balance => {
+            UsageQueryTemplate::Balance => {
                 self.usage_query_code.clear();
                 self.usage_query_api_key.set("");
                 self.usage_query_base_url.set("");
                 self.usage_query_access_token.set("");
                 self.usage_query_user_id.set("");
-            }
-            UsageQueryTemplate::TokenPlan => {
-                self.usage_query_code.clear();
-                self.usage_query_api_key.set("");
-                self.usage_query_base_url.set("");
-                self.usage_query_access_token.set("");
-                self.usage_query_user_id.set("");
-                if self
-                    .usage_query_coding_plan_provider
-                    .value
-                    .trim()
-                    .is_empty()
-                {
-                    self.usage_query_coding_plan_provider.set("kimi");
-                }
             }
         }
         let len = self.usage_query_table_fields().len();
@@ -915,10 +864,10 @@ impl ProviderAddFormState {
 
     pub fn usage_query_extractor_available(&self) -> bool {
         self.usage_query_enabled
-            && !matches!(
-                self.usage_query_template,
-                UsageQueryTemplate::GitHubCopilot | UsageQueryTemplate::TokenPlan
-            )
+    }
+
+    pub(crate) fn should_skip_usage_query_validation(&self) -> bool {
+        self.has_usage_script_meta() && !self.usage_query_touched
     }
 
     fn usage_query_custom_preset_with_variables(&self) -> String {
@@ -1378,25 +1327,6 @@ impl ProviderAddFormState {
     }
 }
 
-pub(crate) fn detect_coding_plan_provider_for_usage_query(base_url: &str) -> Option<&'static str> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.kimi.com/coding") {
-        Some("kimi")
-    } else if url.contains("open.bigmodel.cn")
-        || url.contains("bigmodel.cn")
-        || url.contains("api.z.ai")
-    {
-        Some("zhipu")
-    } else if url.contains("api.minimaxi.com")
-        || url.contains("api.minimax.io")
-        || url.contains("api.minimax.com")
-    {
-        Some("minimax")
-    } else {
-        None
-    }
-}
-
 pub(crate) fn detect_balance_provider_for_usage_query(base_url: &str) -> bool {
     let url = base_url.to_lowercase();
     url.contains("api.deepseek.com")
@@ -1414,8 +1344,6 @@ impl UsageQueryTemplate {
             Self::Custom => "custom",
             Self::General => "general",
             Self::NewApi => "newapi",
-            Self::GitHubCopilot => "github_copilot",
-            Self::TokenPlan => "token_plan",
             Self::Balance => "balance",
         }
     }
@@ -1437,8 +1365,6 @@ impl UsageQueryTemplate {
                 }
             }
             Self::NewApi => "NewAPI",
-            Self::GitHubCopilot => "GitHub Copilot",
-            Self::TokenPlan => "Token Plan",
             Self::Balance => {
                 if crate::cli::i18n::is_chinese() {
                     "官方"
@@ -1454,8 +1380,6 @@ impl UsageQueryTemplate {
             "custom" => Some(Self::Custom),
             "general" => Some(Self::General),
             "newapi" => Some(Self::NewApi),
-            "github_copilot" => Some(Self::GitHubCopilot),
-            "token_plan" => Some(Self::TokenPlan),
             "balance" => Some(Self::Balance),
             _ => None,
         }
