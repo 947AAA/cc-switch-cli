@@ -94,6 +94,7 @@ impl ProviderAddFormState {
                     env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
                 }
                 settings_obj.remove("api_format");
+                settings_obj.remove("apiFormat");
                 settings_obj.remove("openrouter_compat_mode");
                 if self.claude_hide_attribution && self.claude_hide_attribution_touched {
                     settings_obj.insert(
@@ -489,7 +490,9 @@ impl ProviderAddFormState {
         let should_write_common_config_meta = self.should_write_common_config_meta();
         let should_write_claude_api_format = matches!(
             self.claude_api_format,
-            ClaudeApiFormat::OpenAiChat | ClaudeApiFormat::OpenAiResponses
+            ClaudeApiFormat::OpenAiChat
+                | ClaudeApiFormat::OpenAiResponses
+                | ClaudeApiFormat::GeminiNative
         ) && matches!(self.app_type, AppType::Claude)
             && !self.is_claude_official_provider();
         let is_codex_oauth = self.is_claude_codex_oauth_provider();
@@ -540,6 +543,9 @@ impl ProviderAddFormState {
                 }
                 ClaudeApiFormat::OpenAiResponses => {
                     meta_obj.insert("apiFormat".to_string(), json!("openai_responses"));
+                }
+                ClaudeApiFormat::GeminiNative => {
+                    meta_obj.insert("apiFormat".to_string(), json!("gemini_native"));
                 }
             }
         }

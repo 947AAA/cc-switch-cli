@@ -294,6 +294,104 @@ async fn claude_prepare_request_sets_defaults_and_filters_blocked_caller_headers
 }
 
 #[tokio::test]
+async fn claude_gemini_native_prepare_request_rewrites_url_body_and_auth() {
+    let mut provider = claude_provider(
+        "gemini-native",
+        "https://generativelanguage.googleapis.com",
+        None,
+    );
+    provider.meta = Some(ProviderMeta {
+        api_format: Some("gemini_native".to_string()),
+        ..Default::default()
+    });
+    let (_db, router) = test_router().await;
+    let forwarder = RequestForwarder::new(router).expect("create forwarder");
+
+    let request = forwarder
+        .prepare_request(
+            &AppType::Claude,
+            &provider,
+            "/v1/messages",
+            &claude_request_body(),
+            &HeaderMap::new(),
+            ForwardOptions {
+                max_retries: 0,
+                request_timeout: Some(Duration::from_secs(2)),
+                bypass_circuit_breaker: true,
+            },
+        )
+        .await
+        .expect("prepare Gemini Native Claude request")
+        .build()
+        .expect("build Gemini Native Claude request");
+
+    assert_eq!(
+        request.url().as_str(),
+        "https://generativelanguage.googleapis.com/v1beta/models/claude-3-7-sonnet-20250219:generateContent"
+    );
+    assert_eq!(
+        header_value(&request, "x-goog-api-key"),
+        Some("key-gemini-native")
+    );
+    assert_eq!(header_value(&request, "authorization"), None);
+    assert_eq!(header_value(&request, "anthropic-beta"), None);
+    assert_eq!(header_value(&request, "anthropic-version"), None);
+
+    let body = request_body_json(&request);
+    assert!(body.get("contents").is_some());
+    assert!(body.get("messages").is_none());
+    assert_eq!(body["generationConfig"]["maxOutputTokens"], 32);
+}
+
+#[tokio::test]
+async fn claude_gemini_native_prepare_request_preserves_opaque_full_url() {
+    let mut provider =
+        claude_provider("gemini-full", "https://relay.example/custom/generate", None);
+    provider.meta = Some(ProviderMeta {
+        api_format: Some("gemini_native".to_string()),
+        is_full_url: Some(true),
+        ..Default::default()
+    });
+    let (_db, router) = test_router().await;
+    let forwarder = RequestForwarder::new(router).expect("create forwarder");
+
+    let request = forwarder
+        .prepare_request(
+            &AppType::Claude,
+            &provider,
+            "/v1/messages",
+            &json!({
+                "model": "models/gemini-2.5-flash",
+                "max_tokens": 4,
+                "stream": true,
+                "messages": [{
+                    "role": "user",
+                    "content": "hello"
+                }]
+            }),
+            &HeaderMap::new(),
+            ForwardOptions {
+                max_retries: 0,
+                request_timeout: Some(Duration::from_secs(2)),
+                bypass_circuit_breaker: true,
+            },
+        )
+        .await
+        .expect("prepare opaque full-url Gemini Native request")
+        .build()
+        .expect("build opaque full-url Gemini Native request");
+
+    assert_eq!(
+        request.url().as_str(),
+        "https://relay.example/custom/generate?alt=sse"
+    );
+    assert_eq!(
+        header_value(&request, "x-goog-api-key"),
+        Some("key-gemini-full")
+    );
+}
+
+#[tokio::test]
 async fn non_claude_prepare_request_skips_claude_specific_headers() {
     let request = build_request(
         &AppType::Codex,

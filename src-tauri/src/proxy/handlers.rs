@@ -137,7 +137,8 @@ async fn handle_claude_request(
     let forwarder = match RequestForwarder::new(context.provider_router.clone()) {
         Ok(forwarder) => forwarder
             .with_optimizer_config(context.optimizer_config.clone())
-            .with_session(context.session_id.clone(), context.session_client_provided),
+            .with_session(context.session_id.clone(), context.session_client_provided)
+            .with_gemini_shadow(context.state.gemini_shadow.clone()),
         Err(error) => {
             context.state.record_request_error(&error).await;
             return proxy_error_response(error);
@@ -148,6 +149,9 @@ async fn handle_claude_request(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let tool_schema_hints =
+        super::providers::transform_gemini::extract_anthropic_tool_schema_hints(&body);
+    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
     let adapter = ClaudeAdapter::new();
 
     if is_stream {
@@ -223,6 +227,10 @@ async fn handle_claude_request(
                         first_byte_timeout,
                         idle_timeout,
                         api_format,
+                        Some(context.state.gemini_shadow.clone()),
+                        Some(forward_result.provider.id.clone()),
+                        Some(context.session_id.clone()),
+                        tool_schema_hints.clone(),
                     )
                 } else {
                     build_json_response(response, first_byte_timeout, |body| {
@@ -237,7 +245,17 @@ async fn handle_claude_request(
             super::forwarder::StreamingResponse::Buffered(response) => {
                 if adapter.needs_transform(&forward_result.provider) {
                     build_buffered_json_response(status, &response.headers, response.body, |body| {
-                        adapter.transform_response(body)
+                        if api_format == "gemini_native" {
+                            super::providers::transform_gemini_response_for_provider(
+                                body,
+                                &forward_result.provider,
+                                Some(&context.session_id),
+                                Some(context.state.gemini_shadow.as_ref()),
+                                tool_schema_hints.as_ref(),
+                            )
+                        } else {
+                            adapter.transform_response(body)
+                        }
                     })
                 } else {
                     build_buffered_passthrough_response(status, &response.headers, response.body)
@@ -315,7 +333,19 @@ async fn handle_claude_request(
             &response.headers,
             response.body,
             provider.is_codex_oauth() && api_format == "openai_responses",
-            |body| adapter.transform_response(body),
+            |body| {
+                if api_format == "gemini_native" {
+                    super::providers::transform_gemini_response_for_provider(
+                        body,
+                        provider,
+                        Some(&context.session_id),
+                        Some(context.state.gemini_shadow.as_ref()),
+                        tool_schema_hints.as_ref(),
+                    )
+                } else {
+                    adapter.transform_response(body)
+                }
+            },
         )
     } else {
         build_buffered_passthrough_response(status, &response.headers, response.body)
@@ -1070,6 +1100,7 @@ mod tests {
             error::ProxyError,
             provider_router::ProviderRouter,
             providers::codex_chat_history::CodexChatHistoryStore,
+            providers::gemini_shadow::GeminiShadowStore,
             server::ProxyServerState,
             types::{ProxyConfig, ProxyStatus},
         },
@@ -1148,6 +1179,7 @@ mod tests {
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db)),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
         }
     }
 

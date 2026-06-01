@@ -3,7 +3,10 @@ use serde_json::json;
 
 use crate::{provider::Provider, proxy::error::ProxyError};
 
-use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
+use super::{
+    gemini_shadow::GeminiShadowStore, transform_gemini::AnthropicToolSchemaHints, AuthInfo,
+    AuthStrategy, ProviderAdapter, ProviderType,
+};
 
 pub struct ClaudeAdapter;
 
@@ -19,6 +22,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             return match api_format {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
+                "gemini_native" => "gemini_native",
                 _ => "anthropic",
             };
         }
@@ -32,6 +36,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         return match api_format {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
+            "gemini_native" => "gemini_native",
             _ => "anthropic",
         };
     }
@@ -55,7 +60,10 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 }
 
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
-    matches!(api_format, "openai_chat" | "openai_responses")
+    matches!(
+        api_format,
+        "openai_chat" | "openai_responses" | "gemini_native"
+    )
 }
 
 fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
@@ -98,6 +106,18 @@ pub fn transform_claude_request_for_api_format(
     api_format: &str,
     session_id: Option<&str>,
 ) -> Result<serde_json::Value, ProxyError> {
+    transform_claude_request_for_api_format_with_shadow(
+        body, provider, api_format, session_id, None,
+    )
+}
+
+pub fn transform_claude_request_for_api_format_with_shadow(
+    body: serde_json::Value,
+    provider: &Provider,
+    api_format: &str,
+    session_id: Option<&str>,
+    shadow_store: Option<&GeminiShadowStore>,
+) -> Result<serde_json::Value, ProxyError> {
     let explicit_cache_key = provider
         .meta
         .as_ref()
@@ -126,6 +146,12 @@ pub fn transform_claude_request_for_api_format(
                 super::transform::anthropic_to_openai(body, explicit_cache_key)
             }
         }
+        "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
+            body,
+            shadow_store,
+            Some(&provider.id),
+            session_id,
+        ),
         _ => Ok(body),
     }
 }
@@ -136,6 +162,14 @@ impl ClaudeAdapter {
     }
 
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        if self.get_api_format(provider) == "gemini_native" {
+            return match self.extract_key(provider) {
+                Some(key) if key.starts_with("ya29.") || key.starts_with('{') => {
+                    ProviderType::GeminiCli
+                }
+                _ => ProviderType::Gemini,
+            };
+        }
         if self.is_codex_oauth(provider) {
             return ProviderType::CodexOAuth;
         }
@@ -209,6 +243,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_AUTH_TOKEN")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 return Some(key.to_string());
@@ -216,6 +251,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 return Some(key.to_string());
@@ -223,6 +259,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENROUTER_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 return Some(key.to_string());
@@ -230,6 +267,15 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENAI_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return Some(key.to_string());
+            }
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 return Some(key.to_string());
@@ -241,6 +287,7 @@ impl ClaudeAdapter {
             .get("apiKey")
             .or_else(|| provider.settings_config.get("api_key"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
     }
@@ -314,6 +361,33 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        if matches!(
+            provider_type,
+            ProviderType::Gemini | ProviderType::GeminiCli
+        ) {
+            return self.extract_key(provider).map(|key| match provider_type {
+                ProviderType::GeminiCli => {
+                    match super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key) {
+                        Some(creds) if !creds.access_token.is_empty() => {
+                            AuthInfo::with_access_token(key, creds.access_token)
+                        }
+                        Some(_) => {
+                            log::warn!(
+                                "[Gemini OAuth] access_token missing or empty for provider `{}`; \
+                                 bearer auth will likely fail with 401. Refresh \
+                                 ~/.gemini/oauth_creds.json via the gemini CLI to obtain a new token.",
+                                provider.id
+                            );
+                            AuthInfo::new(key, AuthStrategy::GoogleOAuth)
+                        }
+                        None => AuthInfo::new(key, AuthStrategy::GoogleOAuth),
+                    }
+                }
+                ProviderType::Gemini => AuthInfo::new(key, AuthStrategy::Google),
+                _ => unreachable!("Gemini provider type was checked above"),
+            });
+        }
+
         let strategy = match provider_type {
             ProviderType::OpenRouter => AuthStrategy::Bearer,
             ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
@@ -365,7 +439,14 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::CodexOAuth => request
                 .header("Authorization", format!("Bearer {}", auth.api_key))
                 .header("originator", "cc-switch"),
-            AuthStrategy::Bearer | AuthStrategy::Google | AuthStrategy::GoogleOAuth => {
+            AuthStrategy::Google => request.header("x-goog-api-key", &auth.api_key),
+            AuthStrategy::GoogleOAuth => {
+                let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
+                request
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("x-goog-api-client", "GeminiCLI/1.0")
+            }
+            AuthStrategy::Bearer => {
                 request.header("Authorization", format!("Bearer {}", auth.api_key))
             }
         }
@@ -398,12 +479,30 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok(openai_error_to_anthropic(body));
         }
 
-        if body.get("output").is_some() {
+        if body.get("candidates").is_some() || body.get("promptFeedback").is_some() {
+            super::transform_gemini::gemini_to_anthropic(body)
+        } else if body.get("output").is_some() {
             super::transform_responses::responses_to_anthropic(body)
         } else {
             super::transform::openai_to_anthropic(body)
         }
     }
+}
+
+pub fn transform_gemini_response_for_provider(
+    body: serde_json::Value,
+    provider: &Provider,
+    session_id: Option<&str>,
+    shadow_store: Option<&GeminiShadowStore>,
+    tool_schema_hints: Option<&AnthropicToolSchemaHints>,
+) -> Result<serde_json::Value, ProxyError> {
+    super::transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
+        body,
+        shadow_store,
+        Some(&provider.id),
+        session_id,
+        tool_schema_hints,
+    )
 }
 
 fn openai_error_to_anthropic(body: serde_json::Value) -> serde_json::Value {
@@ -431,6 +530,23 @@ mod tests {
     use super::*;
     use crate::provider::Provider;
     use serde_json::json;
+
+    fn claude_gemini_native_provider(key: &str) -> Provider {
+        serde_json::from_value(json!({
+            "id": "claude-gemini-native",
+            "name": "Claude Gemini Native",
+            "settingsConfig": {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": key
+                }
+            },
+            "meta": {
+                "apiFormat": "gemini_native"
+            }
+        }))
+        .expect("provider should deserialize")
+    }
 
     #[test]
     fn provider_meta_provider_type_github_copilot_uses_upstream_runtime_behavior() {
@@ -495,6 +611,69 @@ mod tests {
             .expect("codex oauth should resolve auth");
         assert_eq!(format!("{:?}", auth.strategy), "CodexOAuth");
         assert!(adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn gemini_native_oauth_access_token_is_trimmed_and_classified() {
+        let adapter = ClaudeAdapter::new();
+        let provider = claude_gemini_native_provider("\nya29.raw-token-value\n");
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("gemini native oauth should resolve auth");
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+        assert_eq!(auth.api_key, "ya29.raw-token-value");
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.raw-token-value"));
+    }
+
+    #[test]
+    fn gemini_native_oauth_refresh_only_json_does_not_expose_empty_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let provider = claude_gemini_native_provider(
+            r#"{"refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#,
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("gemini native refresh-only oauth should resolve auth");
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+        assert_eq!(auth.access_token, None);
+    }
+
+    #[test]
+    fn gemini_native_oauth_empty_access_token_json_does_not_expose_empty_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let provider = claude_gemini_native_provider(
+            r#"{"access_token":"","refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#,
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("gemini native expired oauth should resolve auth");
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+        assert_eq!(auth.access_token, None);
+    }
+
+    #[test]
+    fn gemini_native_oauth_valid_json_keeps_access_token() {
+        let adapter = ClaudeAdapter::new();
+        let provider = claude_gemini_native_provider(
+            "\n  {\"access_token\":\"ya29.valid\",\"refresh_token\":\"rt\"}\n",
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("gemini native json oauth should resolve auth");
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
     }
 
     #[test]

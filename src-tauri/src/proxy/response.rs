@@ -18,10 +18,13 @@ use super::{
     metrics::estimate_tokens_from_bytes,
     providers::{
         codex_chat_history::{record_responses_sse_stream, CodexChatHistoryStore},
+        gemini_shadow::GeminiShadowStore,
         streaming::create_anthropic_sse_stream,
         streaming_codex_chat::create_responses_sse_stream_from_chat,
+        streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses,
         transform_codex_chat,
+        transform_gemini::AnthropicToolSchemaHints,
     },
 };
 
@@ -302,6 +305,10 @@ pub fn build_anthropic_stream_response(
     first_byte_timeout: Option<Duration>,
     idle_timeout: Option<Duration>,
     api_format: &str,
+    gemini_shadow: Option<Arc<GeminiShadowStore>>,
+    provider_id: Option<String>,
+    session_id: Option<String>,
+    tool_schema_hints: Option<AnthropicToolSchemaHints>,
 ) -> Result<PreparedResponse, ProxyError> {
     let status = response.status();
     let headers = response.headers().clone();
@@ -317,16 +324,22 @@ pub fn build_anthropic_stream_response(
     );
     let stream: std::pin::Pin<
         Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
-    > = if api_format == "openai_responses" {
-        Box::pin(create_anthropic_sse_stream_from_responses(
+    > = match api_format {
+        "openai_responses" => Box::pin(create_anthropic_sse_stream_from_responses(
             timed_stream,
             stream_completion.clone(),
-        ))
-    } else {
-        Box::pin(create_anthropic_sse_stream(
+        )),
+        "gemini_native" => Box::pin(create_anthropic_sse_stream_from_gemini(
+            timed_stream,
+            gemini_shadow,
+            provider_id,
+            session_id,
+            tool_schema_hints,
+        )),
+        _ => Box::pin(create_anthropic_sse_stream(
             timed_stream,
             stream_completion.clone(),
-        ))
+        )),
     };
     builder
         .body(Body::from_stream(stream))

@@ -17,6 +17,17 @@ use crate::services::ProviderService;
 use crate::store::AppState;
 use inquire::{Confirm, Select, Text};
 
+const CLAUDE_API_FORMAT_ANTHROPIC: &str = "anthropic";
+const CLAUDE_API_FORMAT_OPENAI_CHAT: &str = "openai_chat";
+const CLAUDE_API_FORMAT_OPENAI_RESPONSES: &str = "openai_responses";
+const CLAUDE_API_FORMAT_GEMINI_NATIVE: &str = "gemini_native";
+const CLAUDE_API_FORMAT_CHOICES: [&str; 4] = [
+    CLAUDE_API_FORMAT_ANTHROPIC,
+    CLAUDE_API_FORMAT_OPENAI_CHAT,
+    CLAUDE_API_FORMAT_OPENAI_RESPONSES,
+    CLAUDE_API_FORMAT_GEMINI_NATIVE,
+];
+
 fn supports_official_provider(app_type: &AppType) -> bool {
     matches!(app_type, AppType::Codex)
 }
@@ -30,6 +41,165 @@ fn is_codex_official_provider(provider: &Provider) -> bool {
         || provider.category.as_deref() == Some("official")
         || provider.website_url.as_deref() == Some("https://chatgpt.com/codex")
         || provider.name.trim().eq_ignore_ascii_case("OpenAI Official")
+}
+
+fn is_claude_official_provider(provider: &Provider) -> bool {
+    provider
+        .category
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("official"))
+}
+
+fn is_claude_codex_oauth_provider(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        .is_some_and(|value| value == "codex_oauth")
+}
+
+fn normalize_claude_api_format(raw: &str) -> &'static str {
+    match raw.trim() {
+        CLAUDE_API_FORMAT_OPENAI_CHAT => CLAUDE_API_FORMAT_OPENAI_CHAT,
+        CLAUDE_API_FORMAT_OPENAI_RESPONSES => CLAUDE_API_FORMAT_OPENAI_RESPONSES,
+        CLAUDE_API_FORMAT_GEMINI_NATIVE => CLAUDE_API_FORMAT_GEMINI_NATIVE,
+        _ => CLAUDE_API_FORMAT_ANTHROPIC,
+    }
+}
+
+fn legacy_openrouter_compat_mode_enabled(settings_config: &serde_json::Value) -> bool {
+    match settings_config.get("openrouter_compat_mode") {
+        Some(serde_json::Value::Bool(value)) => *value,
+        Some(serde_json::Value::Number(value)) => value.as_i64().unwrap_or(0) != 0,
+        Some(serde_json::Value::String(value)) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "true" || normalized == "1"
+        }
+        _ => false,
+    }
+}
+
+fn effective_claude_api_format(provider: &Provider) -> &'static str {
+    if is_claude_codex_oauth_provider(provider) {
+        return CLAUDE_API_FORMAT_OPENAI_RESPONSES;
+    }
+
+    if let Some(api_format) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+    {
+        return normalize_claude_api_format(api_format);
+    }
+
+    if let Some(api_format) = provider
+        .settings_config
+        .get("api_format")
+        .and_then(|value| value.as_str())
+    {
+        return normalize_claude_api_format(api_format);
+    }
+
+    if legacy_openrouter_compat_mode_enabled(&provider.settings_config) {
+        CLAUDE_API_FORMAT_OPENAI_CHAT
+    } else {
+        CLAUDE_API_FORMAT_ANTHROPIC
+    }
+}
+
+fn provider_meta_is_empty(meta: &ProviderMeta) -> bool {
+    serde_json::to_value(meta)
+        .ok()
+        .and_then(|value| value.as_object().map(|object| object.is_empty()))
+        .unwrap_or(false)
+}
+
+fn prune_empty_provider_meta(provider: &mut Provider) {
+    if provider.meta.as_ref().is_some_and(provider_meta_is_empty) {
+        provider.meta = None;
+    }
+}
+
+fn strip_claude_api_format_legacy_settings(provider: &mut Provider) {
+    let Some(settings_obj) = provider.settings_config.as_object_mut() else {
+        return;
+    };
+    settings_obj.remove("api_format");
+    settings_obj.remove("apiFormat");
+    settings_obj.remove("openrouter_compat_mode");
+}
+
+fn apply_claude_api_format(provider: &mut Provider, api_format: &str) {
+    let api_format = normalize_claude_api_format(api_format);
+    if api_format == CLAUDE_API_FORMAT_ANTHROPIC {
+        if let Some(meta) = provider.meta.as_mut() {
+            meta.api_format = None;
+        }
+        prune_empty_provider_meta(provider);
+    } else {
+        provider
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .api_format = Some(api_format.to_string());
+    }
+    strip_claude_api_format_legacy_settings(provider);
+}
+
+fn apply_fixed_claude_api_format_if_needed(app_type: &AppType, provider: &mut Provider) -> bool {
+    if !matches!(app_type, AppType::Claude) {
+        return true;
+    }
+
+    if is_claude_codex_oauth_provider(provider) {
+        apply_claude_api_format(provider, CLAUDE_API_FORMAT_OPENAI_RESPONSES);
+        return true;
+    }
+
+    if is_claude_official_provider(provider) {
+        apply_claude_api_format(provider, CLAUDE_API_FORMAT_ANTHROPIC);
+        return true;
+    }
+
+    false
+}
+
+fn prompt_claude_api_format(provider: &Provider) -> Result<&'static str, AppError> {
+    let current = effective_claude_api_format(provider);
+    let default_index = CLAUDE_API_FORMAT_CHOICES
+        .iter()
+        .position(|api_format| *api_format == current)
+        .unwrap_or(0);
+    let choices = CLAUDE_API_FORMAT_CHOICES
+        .iter()
+        .map(|api_format| texts::tui_claude_api_format_value(api_format).to_string())
+        .collect::<Vec<_>>();
+
+    let selected = Select::new(texts::tui_label_claude_api_format(), choices.clone())
+        .with_starting_cursor(default_index)
+        .prompt()
+        .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
+    let selected_index = choices
+        .iter()
+        .position(|choice| choice == &selected)
+        .unwrap_or(default_index);
+
+    Ok(CLAUDE_API_FORMAT_CHOICES
+        .get(selected_index)
+        .copied()
+        .unwrap_or(CLAUDE_API_FORMAT_ANTHROPIC))
+}
+
+fn prompt_and_apply_claude_api_format(
+    app_type: &AppType,
+    provider: &mut Provider,
+) -> Result<(), AppError> {
+    if apply_fixed_claude_api_format_if_needed(app_type, provider) {
+        return Ok(());
+    }
+
+    let api_format = prompt_claude_api_format(provider)?;
+    apply_claude_api_format(provider, api_format);
+    Ok(())
 }
 
 fn prompt_common_config_enabled(
@@ -343,6 +513,7 @@ fn add_provider(app_type: AppType) -> Result<(), AppError> {
         },
         in_failover_queue: false,
     };
+    prompt_and_apply_claude_api_format(&app_type, &mut provider)?;
     if let Some(enabled) = prompt_common_config_enabled(&app_type, common_snippet.as_deref(), None)?
     {
         set_provider_common_config_meta(&mut provider, enabled);
@@ -439,15 +610,16 @@ fn edit_provider(app_type: AppType, id: &str) -> Result<(), AppError> {
         name: name.trim().to_string(),
         settings_config,
         website_url,
-        category: None,
+        category: original.category.clone(),
         created_at: original.created_at,
         sort_index: optional.sort_index,
         notes: optional.notes,
-        icon: None,
-        icon_color: None,
+        icon: original.icon.clone(),
+        icon_color: original.icon_color.clone(),
         meta: original.meta,                           // 保留元数据
         in_failover_queue: original.in_failover_queue, // 保留故障转移状态
     };
+    prompt_and_apply_claude_api_format(&app_type, &mut updated)?;
     if let Some(enabled) =
         prompt_common_config_enabled(&app_type, common_snippet.as_deref(), Some(&updated))?
     {
@@ -479,6 +651,198 @@ fn edit_provider(app_type: AppType, id: &str) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn claude_provider(settings_config: serde_json::Value) -> Provider {
+        Provider::with_id(
+            "provider-1".to_string(),
+            "Provider One".to_string(),
+            settings_config,
+            None,
+        )
+    }
+
+    #[test]
+    fn claude_api_format_effective_value_prefers_meta_over_legacy_settings() {
+        let mut provider = claude_provider(json!({
+            "api_format": "openai_chat",
+            "openrouter_compat_mode": true
+        }));
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            effective_claude_api_format(&provider),
+            CLAUDE_API_FORMAT_OPENAI_RESPONSES
+        );
+    }
+
+    #[test]
+    fn claude_api_format_effective_value_preserves_gemini_native_meta() {
+        let mut provider = claude_provider(json!({
+            "api_format": "openai_chat"
+        }));
+        provider.meta = Some(ProviderMeta {
+            api_format: Some(CLAUDE_API_FORMAT_GEMINI_NATIVE.to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            effective_claude_api_format(&provider),
+            CLAUDE_API_FORMAT_GEMINI_NATIVE
+        );
+    }
+
+    #[test]
+    fn claude_api_format_effective_value_reads_legacy_openrouter_flag() {
+        let provider = claude_provider(json!({
+            "openrouter_compat_mode": "true"
+        }));
+
+        assert_eq!(
+            effective_claude_api_format(&provider),
+            CLAUDE_API_FORMAT_OPENAI_CHAT
+        );
+    }
+
+    #[test]
+    fn claude_api_format_apply_writes_canonical_meta_and_removes_legacy_settings() {
+        let mut provider = claude_provider(json!({
+            "api_format": "anthropic",
+            "apiFormat": "openai_chat",
+            "openrouter_compat_mode": true,
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://example.com"
+            }
+        }));
+
+        apply_claude_api_format(&mut provider, CLAUDE_API_FORMAT_OPENAI_CHAT);
+
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some(CLAUDE_API_FORMAT_OPENAI_CHAT)
+        );
+        assert!(provider.settings_config.get("api_format").is_none());
+        assert!(provider.settings_config.get("apiFormat").is_none());
+        assert!(provider
+            .settings_config
+            .get("openrouter_compat_mode")
+            .is_none());
+        assert_eq!(
+            provider.settings_config["env"]["ANTHROPIC_BASE_URL"],
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn claude_api_format_apply_writes_gemini_native_meta() {
+        let mut provider = claude_provider(json!({
+            "api_format": "openai_chat",
+            "apiFormat": "openai_chat",
+            "openrouter_compat_mode": true,
+        }));
+
+        apply_claude_api_format(&mut provider, CLAUDE_API_FORMAT_GEMINI_NATIVE);
+
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some(CLAUDE_API_FORMAT_GEMINI_NATIVE)
+        );
+        assert!(provider.settings_config.get("api_format").is_none());
+        assert!(provider.settings_config.get("apiFormat").is_none());
+        assert!(provider
+            .settings_config
+            .get("openrouter_compat_mode")
+            .is_none());
+    }
+
+    #[test]
+    fn claude_api_format_apply_anthropic_removes_only_api_format_meta() {
+        let mut provider = claude_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            apply_common_config: Some(false),
+            api_format: Some(CLAUDE_API_FORMAT_OPENAI_RESPONSES.to_string()),
+            ..Default::default()
+        });
+
+        apply_claude_api_format(&mut provider, CLAUDE_API_FORMAT_ANTHROPIC);
+
+        let meta = provider.meta.expect("other metadata should be preserved");
+        assert_eq!(meta.apply_common_config, Some(false));
+        assert_eq!(meta.api_format, None);
+    }
+
+    #[test]
+    fn claude_api_format_apply_anthropic_prunes_empty_meta() {
+        let mut provider = claude_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            api_format: Some(CLAUDE_API_FORMAT_OPENAI_CHAT.to_string()),
+            ..Default::default()
+        });
+
+        apply_claude_api_format(&mut provider, CLAUDE_API_FORMAT_ANTHROPIC);
+
+        assert!(provider.meta.is_none());
+    }
+
+    #[test]
+    fn claude_api_format_fixed_provider_handling_skips_official_and_clears_meta() {
+        let mut provider = claude_provider(json!({
+            "api_format": "openai_chat"
+        }));
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            api_format: Some(CLAUDE_API_FORMAT_OPENAI_CHAT.to_string()),
+            ..Default::default()
+        });
+
+        assert!(apply_fixed_claude_api_format_if_needed(
+            &AppType::Claude,
+            &mut provider
+        ));
+        assert!(provider.meta.is_none());
+        assert!(provider.settings_config.get("api_format").is_none());
+    }
+
+    #[test]
+    fn claude_api_format_fixed_provider_handling_forces_codex_oauth_responses() {
+        let mut provider = claude_provider(json!({
+            "openrouter_compat_mode": true
+        }));
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        assert!(apply_fixed_claude_api_format_if_needed(
+            &AppType::Claude,
+            &mut provider
+        ));
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some(CLAUDE_API_FORMAT_OPENAI_RESPONSES)
+        );
+        assert!(provider
+            .settings_config
+            .get("openrouter_compat_mode")
+            .is_none());
+    }
 }
 
 fn duplicate_provider(app_type: AppType, id: &str) -> Result<(), AppError> {

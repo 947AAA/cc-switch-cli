@@ -1578,6 +1578,13 @@ pub mod texts {
                     "OpenAI Responses API (Requires proxy)"
                 }
             }
+            "gemini_native" => {
+                if is_chinese() {
+                    "Gemini Native generateContent (需开启代理)"
+                } else {
+                    "Gemini Native generateContent (Requires proxy)"
+                }
+            }
             _ => {
                 if is_chinese() {
                     "Anthropic Messages (原生)"

@@ -15,7 +15,10 @@ use crate::{
     app_config::AppType,
     database::Database,
     provider::Provider,
-    proxy::{provider_router::ProviderRouter, types::ProxyConfig},
+    proxy::{
+        provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore,
+        types::ProxyConfig,
+    },
 };
 
 use super::*;
@@ -100,6 +103,7 @@ fn test_state_with_db(db: Arc<Database>) -> ProxyServerState {
         current_providers: Arc::new(RwLock::new(HashMap::new())),
         provider_router: Arc::new(ProviderRouter::new(db)),
         codex_chat_history: Arc::new(Default::default()),
+        gemini_shadow: Arc::new(GeminiShadowStore::default()),
     }
 }
 

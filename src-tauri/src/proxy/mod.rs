@@ -3,6 +3,7 @@ pub mod cache_injector;
 pub mod circuit_breaker;
 pub mod error;
 pub mod forwarder;
+pub mod gemini_url;
 pub mod handler_context;
 pub mod handlers;
 pub mod http_client;

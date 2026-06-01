@@ -77,6 +77,8 @@ impl RequestForwarder {
         let codex_responses_to_chat = should_convert_codex_responses_to_chat(provider, endpoint)
             && matches!(app_type, AppType::Codex);
         let needs_transform = adapter.needs_transform(provider);
+        let claude_api_format =
+            is_claude_request.then(|| super::super::providers::get_claude_api_format(provider));
 
         if is_claude_request && self.optimizer_config.enabled && is_bedrock_provider(provider) {
             if self.optimizer_config.thinking_optimizer {
@@ -88,6 +90,10 @@ impl RequestForwarder {
             if self.optimizer_config.cache_injection {
                 super::super::cache_injector::inject(&mut mapped_body, &self.optimizer_config);
             }
+        }
+
+        if claude_api_format == Some("gemini_native") {
+            upstream_endpoint = rewrite_claude_gemini_native_endpoint(endpoint, &mapped_body);
         }
 
         let request_body = if codex_responses_to_chat {
@@ -103,12 +109,13 @@ impl RequestForwarder {
             )?
         } else if needs_transform {
             if is_claude_request {
-                super::super::providers::transform_claude_request_for_api_format(
+                super::super::providers::transform_claude_request_for_api_format_with_shadow(
                     mapped_body,
                     provider,
-                    super::super::providers::get_claude_api_format(provider),
+                    claude_api_format.unwrap_or("anthropic"),
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
+                    self.gemini_shadow.as_deref(),
                 )?
             } else {
                 adapter.transform_request(mapped_body, provider)?
@@ -135,6 +142,7 @@ impl RequestForwarder {
             self.session_client_provided
                 .then_some(self.session_id.as_str()),
             force_identity_encoding,
+            claude_api_format,
         )
         .await
     }
@@ -165,9 +173,17 @@ async fn build_request(
     is_claude_request: bool,
     client_session_id: Option<&str>,
     force_identity_encoding: bool,
+    claude_api_format: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, ProxyError> {
     let (endpoint_path, endpoint_query) = split_endpoint_and_query(endpoint);
-    let url = if base_url
+    let url = if claude_api_format == Some("gemini_native") {
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        super::super::gemini_url::resolve_gemini_native_url(base_url, endpoint, is_full_url)
+    } else if base_url
         .trim_end_matches('/')
         .to_ascii_lowercase()
         .ends_with("/chat/completions")
@@ -288,6 +304,49 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> String {
         Some(query) if !query.is_empty() => format!("/chat/completions?{query}"),
         _ => "/chat/completions".to_string(),
     }
+}
+
+fn rewrite_claude_gemini_native_endpoint(endpoint: &str, body: &Value) -> String {
+    let (path, query) = split_endpoint_and_query(endpoint);
+    if path != "/v1/messages" {
+        return endpoint.to_string();
+    }
+
+    let model = super::super::providers::transform_gemini::extract_gemini_model(body)
+        .map(super::super::gemini_url::normalize_gemini_model_id)
+        .unwrap_or("unknown");
+    let is_stream = body
+        .get("stream")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let target = if is_stream {
+        format!("/v1beta/models/{model}:streamGenerateContent")
+    } else {
+        format!("/v1beta/models/{model}:generateContent")
+    };
+    let query = merge_query_params(query, is_stream.then_some("alt=sse"));
+    match query {
+        Some(query) if !query.is_empty() => format!("{target}?{query}"),
+        _ => target,
+    }
+}
+
+fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(query) = base_query.map(str::trim).filter(|query| !query.is_empty()) {
+        parts.push(query.to_string());
+    }
+    if let Some(param) = extra_param.map(str::trim).filter(|param| !param.is_empty()) {
+        let key = param.split_once('=').map_or(param, |(key, _)| key);
+        if !parts
+            .iter()
+            .flat_map(|query| query.split('&'))
+            .any(|existing| existing.split_once('=').map_or(existing, |(key, _)| key) == key)
+        {
+            parts.push(param.to_string());
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("&"))
 }
 
 fn append_query_to_url(url: &str, query: Option<&str>) -> String {

@@ -9,6 +9,7 @@ use crate::provider::Provider;
 use super::{
     error::ProxyError,
     provider_router::ProviderRouter,
+    providers::gemini_shadow::GeminiShadowStore,
     server::ProxyServerState,
     session::extract_session_id,
     types::{AppProxyConfig, OptimizerConfig, RectifierConfig},
@@ -212,6 +213,7 @@ mod tests {
             current_providers: Arc::new(RwLock::new(Default::default())),
             provider_router: Arc::new(ProviderRouter::new(db)),
             codex_chat_history: Arc::new(Default::default()),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
         }
     }
 

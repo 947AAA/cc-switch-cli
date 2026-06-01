@@ -2081,6 +2081,23 @@ pub fn display_provider_summary(provider: &Provider, app_type: &AppType) {
     println!("\n{}", texts::core_config_label().bright_cyan());
     match app_type {
         AppType::Claude => {
+            let is_official = provider
+                .category
+                .as_deref()
+                .is_some_and(|category| category.eq_ignore_ascii_case("official"));
+            let is_codex_oauth = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref())
+                == Some("codex_oauth");
+            if !is_official && !is_codex_oauth {
+                let api_format = crate::proxy::providers::get_claude_api_format(provider);
+                println!(
+                    "  {}: {}",
+                    texts::tui_label_claude_api_format(),
+                    texts::tui_claude_api_format_value(api_format)
+                );
+            }
             if let Some(env) = provider.settings_config.get("env") {
                 if let Some(api_key) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
                     println!(

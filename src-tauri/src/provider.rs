@@ -326,6 +326,9 @@ pub struct ProviderMeta {
     /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -487,6 +490,18 @@ mod tests {
         }))
         .expect("deserialize legacy alias");
         assert_eq!(deserialized.apply_common_config, Some(false));
+    }
+
+    #[test]
+    fn provider_meta_round_trips_upstream_full_url_flag() {
+        let meta: ProviderMeta = serde_json::from_value(serde_json::json!({
+            "isFullUrl": true
+        }))
+        .expect("deserialize full-url flag");
+
+        assert_eq!(meta.is_full_url, Some(true));
+        let serialized = serde_json::to_value(&meta).expect("serialize provider meta");
+        assert_eq!(serialized["isFullUrl"], true);
     }
 
     #[test]

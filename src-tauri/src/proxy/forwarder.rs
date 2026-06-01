@@ -12,6 +12,7 @@ use super::{
     error::ProxyError,
     provider_router::ProviderRouter,
     providers::codex_chat_history::CodexChatHistoryStore,
+    providers::gemini_shadow::GeminiShadowStore,
     providers::get_adapter,
     response::decode_buffered_response_body,
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
@@ -30,6 +31,7 @@ pub struct RequestForwarder {
     session_id: String,
     session_client_provided: bool,
     codex_chat_history: Option<Arc<CodexChatHistoryStore>>,
+    gemini_shadow: Option<Arc<GeminiShadowStore>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -114,6 +116,7 @@ impl RequestForwarder {
             session_id: String::new(),
             session_client_provided: false,
             codex_chat_history: None,
+            gemini_shadow: None,
         })
     }
 
@@ -130,6 +133,11 @@ impl RequestForwarder {
 
     pub fn with_codex_chat_history(mut self, history: Arc<CodexChatHistoryStore>) -> Self {
         self.codex_chat_history = Some(history);
+        self
+    }
+
+    pub fn with_gemini_shadow(mut self, shadow: Arc<GeminiShadowStore>) -> Self {
+        self.gemini_shadow = Some(shadow);
         self
     }
 

@@ -67,13 +67,15 @@ pub enum ClaudeApiFormat {
     Anthropic,
     OpenAiChat,
     OpenAiResponses,
+    GeminiNative,
 }
 
 impl ClaudeApiFormat {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
         ClaudeApiFormat::Anthropic,
         ClaudeApiFormat::OpenAiChat,
         ClaudeApiFormat::OpenAiResponses,
+        ClaudeApiFormat::GeminiNative,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -81,6 +83,7 @@ impl ClaudeApiFormat {
             ClaudeApiFormat::Anthropic => "anthropic",
             ClaudeApiFormat::OpenAiChat => "openai_chat",
             ClaudeApiFormat::OpenAiResponses => "openai_responses",
+            ClaudeApiFormat::GeminiNative => "gemini_native",
         }
     }
 
@@ -88,6 +91,7 @@ impl ClaudeApiFormat {
         match value {
             "openai_chat" => ClaudeApiFormat::OpenAiChat,
             "openai_responses" => ClaudeApiFormat::OpenAiResponses,
+            "gemini_native" => ClaudeApiFormat::GeminiNative,
             _ => ClaudeApiFormat::Anthropic,
         }
     }
@@ -97,6 +101,7 @@ impl ClaudeApiFormat {
             ClaudeApiFormat::Anthropic => 0,
             ClaudeApiFormat::OpenAiChat => 1,
             ClaudeApiFormat::OpenAiResponses => 2,
+            ClaudeApiFormat::GeminiNative => 3,
         }
     }
 

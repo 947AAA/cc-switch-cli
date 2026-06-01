@@ -858,6 +858,40 @@ fn provider_add_form_claude_api_format_round_trips_openai_responses_meta() {
 }
 
 #[test]
+fn provider_add_form_claude_api_format_round_trips_gemini_native_meta() {
+    let mut provider = Provider::with_id(
+        "p1".to_string(),
+        "Provider One".to_string(),
+        json!({
+            "api_format": "openai_chat",
+            "apiFormat": "openai_chat",
+            "openrouter_compat_mode": true,
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com"
+            }
+        }),
+        None,
+    );
+    provider.meta = Some(crate::provider::ProviderMeta {
+        api_format: Some("gemini_native".to_string()),
+        is_full_url: Some(true),
+        ..Default::default()
+    });
+
+    let form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+    assert_eq!(form.claude_api_format, ClaudeApiFormat::GeminiNative);
+
+    let saved = form.to_provider_json_value();
+    assert_eq!(saved["meta"]["apiFormat"], "gemini_native");
+    assert_eq!(saved["meta"]["isFullUrl"], true);
+    assert!(saved["settingsConfig"].get("api_format").is_none());
+    assert!(saved["settingsConfig"].get("apiFormat").is_none());
+    assert!(saved["settingsConfig"]
+        .get("openrouter_compat_mode")
+        .is_none());
+}
+
+#[test]
 fn provider_add_form_claude_from_provider_backfills_models_with_legacy_fallback() {
     let provider = Provider::with_id(
         "p1".to_string(),
