@@ -27,16 +27,9 @@ pub(crate) use provider_state::{
     detect_balance_provider_for_usage_query, detect_coding_plan_provider_for_usage_query,
 };
 
-pub const OPENCLAW_DEFAULT_API_PROTOCOL: &str = "openai-completions";
-pub const OPENCLAW_DEFAULT_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
-pub const OPENCLAW_API_PROTOCOLS: [&str; 5] = [
-    "openai-completions",
-    "openai-responses",
-    "anthropic-messages",
-    "google-generative-ai",
-    "bedrock-converse-stream",
-];
+pub(crate) use crate::openclaw_config::{
+    OPENCLAW_API_PROTOCOLS, OPENCLAW_DEFAULT_API_PROTOCOL, OPENCLAW_DEFAULT_USER_AGENT,
+};
 pub const HERMES_DEFAULT_API_MODE: &str = "chat_completions";
 pub const HERMES_API_MODES: [&str; 4] = [
     "chat_completions",

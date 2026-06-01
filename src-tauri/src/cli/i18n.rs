@@ -8756,6 +8756,78 @@ pub mod texts {
         }
     }
 
+    pub fn config_openclaw_header() -> &'static str {
+        if is_chinese() {
+            "配置 OpenClaw 供应商："
+        } else {
+            "Configure OpenClaw Provider:"
+        }
+    }
+
+    pub fn openclaw_api_protocol_label() -> &'static str {
+        if is_chinese() {
+            "API 协议："
+        } else {
+            "API Protocol:"
+        }
+    }
+
+    pub fn openclaw_api_protocol_help() -> &'static str {
+        if is_chinese() {
+            "选择与供应商接口兼容的协议"
+        } else {
+            "Select the protocol compatible with the provider API"
+        }
+    }
+
+    pub fn openclaw_base_url_help() -> &'static str {
+        if is_chinese() {
+            "供应商 API 端点，留空则不写入"
+        } else {
+            "Provider API endpoint; leave empty to omit it"
+        }
+    }
+
+    pub fn openclaw_user_agent_prompt() -> &'static str {
+        if is_chinese() {
+            "发送默认 User-Agent？"
+        } else {
+            "Send the default User-Agent?"
+        }
+    }
+
+    pub fn openclaw_user_agent_help() -> &'static str {
+        if is_chinese() {
+            "启用后写入 headers.User-Agent；关闭后移除该请求头"
+        } else {
+            "When enabled, writes headers.User-Agent; when disabled, removes it"
+        }
+    }
+
+    pub fn openclaw_models_json_label() -> &'static str {
+        if is_chinese() {
+            "模型列表 JSON："
+        } else {
+            "Models JSON:"
+        }
+    }
+
+    pub fn openclaw_models_json_help() -> &'static str {
+        if is_chinese() {
+            "输入非空 JSON 数组，例如 [{\"id\":\"gpt-4.1\",\"name\":\"GPT 4.1\"}]"
+        } else {
+            "Enter a non-empty JSON array, for example [{\"id\":\"gpt-4.1\",\"name\":\"GPT 4.1\"}]"
+        }
+    }
+
+    pub fn openclaw_models_invalid_schema_error(err: &str) -> String {
+        if is_chinese() {
+            format!("OpenClaw 模型列表格式无效: {err}")
+        } else {
+            format!("OpenClaw models schema is invalid: {err}")
+        }
+    }
+
     pub fn auth_type_label() -> &'static str {
         if is_chinese() {
             "认证类型："

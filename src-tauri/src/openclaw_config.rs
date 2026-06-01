@@ -19,6 +19,17 @@ use std::sync::{Mutex, OnceLock};
 
 const OPENCLAW_DEFAULT_SOURCE: &str =
     "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
+pub const OPENCLAW_DEFAULT_API_PROTOCOL: &str = "openai-completions";
+pub const OPENCLAW_DEFAULT_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
+pub const OPENCLAW_API_PROTOCOLS: [&str; 5] = [
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+    "google-generative-ai",
+    "bedrock-converse-stream",
+];
+
 pub fn get_openclaw_dir() -> PathBuf {
     if let Some(override_dir) = get_openclaw_override_dir() {
         return override_dir;
