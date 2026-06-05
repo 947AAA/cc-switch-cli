@@ -481,7 +481,7 @@ impl McpEnvEntryEditorState {
 #[derive(Debug, Clone)]
 pub enum Overlay {
     None,
-    Help,
+    Help(crate::cli::tui::help::HelpState),
     Confirm(ConfirmOverlay),
     TextInput(TextInputState),
     BackupPicker {
@@ -616,6 +616,36 @@ impl Overlay {
         !matches!(self, Overlay::None)
     }
 
+    pub fn can_be_covered_by_help(&self) -> bool {
+        matches!(
+            self,
+            Overlay::BackupPicker { .. }
+                | Overlay::TextView(_)
+                | Overlay::CommonSnippetPicker { .. }
+                | Overlay::ProviderTestMenu { .. }
+                | Overlay::FailoverQueueManager { .. }
+                | Overlay::ClaudeApiFormatPicker { .. }
+                | Overlay::UsageQueryTemplatePicker { .. }
+                | Overlay::ManagedAccountPicker { .. }
+                | Overlay::ManagedAccountActionPicker { .. }
+                | Overlay::ClaudeModelPicker { editing: false, .. }
+                | Overlay::HermesModelsPicker { editing: false }
+                | Overlay::OpenClawToolsProfilePicker { .. }
+                | Overlay::OpenClawAgentsFallbackPicker { .. }
+                | Overlay::McpAppsPicker { .. }
+                | Overlay::VisibleAppsPicker { .. }
+                | Overlay::SkillsAppsPicker { .. }
+                | Overlay::SkillsImportPicker { .. }
+                | Overlay::SkillsSyncMethodPicker { .. }
+                | Overlay::McpEnvPicker { .. }
+                | Overlay::McpTypePicker { .. }
+                | Overlay::SpeedtestResult { .. }
+                | Overlay::StreamCheckResult { .. }
+                | Overlay::UpdateAvailable { .. }
+                | Overlay::UpdateResult { .. }
+        )
+    }
+
     /// Whether this overlay is actively accepting text input.
     /// This controls whether the main UI should consider itself in "editing mode" and e.g. respond to vim-style navigation.
     pub fn is_editing(&self) -> bool {
@@ -626,7 +656,7 @@ impl Overlay {
             Overlay::ModelFetchPicker { .. } => true,
             Overlay::McpEnvEntryEditor(editor) => editor.is_editing(),
             Overlay::None
-            | Overlay::Help
+            | Overlay::Help(_)
             | Overlay::Confirm(_)
             | Overlay::BackupPicker { .. }
             | Overlay::TextView(_)
