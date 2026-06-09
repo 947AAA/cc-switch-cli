@@ -7,7 +7,9 @@ use serde_json::json;
 use serial_test::serial;
 use tempfile::TempDir;
 
-use super::app::{App, EditorSubmit, LoadingKind, Overlay, ToastKind};
+use super::app::{
+    App, ConfirmAction, ConfirmOverlay, EditorSubmit, LoadingKind, Overlay, ToastKind,
+};
 use super::data::UiData;
 use super::form::ProviderAddField;
 use super::*;
@@ -16,6 +18,15 @@ use crate::test_support::{
     lock_test_home_and_settings, set_test_home_override, TestHomeSettingsLock,
 };
 use crate::{AppError, AppType};
+
+fn pending_app_data(request_id: u64) -> PendingAppDataLoad {
+    PendingAppDataLoad {
+        kind: AppDataLoadKind::Snapshot,
+        request_id,
+        generation: 0,
+        app_state_epoch: 0,
+    }
+}
 
 struct EnvGuard {
     _lock: TestHomeSettingsLock,
@@ -96,11 +107,7 @@ fn app_switch_cache_miss_queues_background_load_without_blocking() {
     assert_eq!(data.config.common_snippet, "codex shared config");
     assert_eq!(
         cache.pending_by_app.get(&AppType::Codex).copied(),
-        Some(PendingDataLoad {
-            request_id: 1,
-            generation: 0,
-            app_state_epoch: 0,
-        })
+        Some(pending_app_data(1))
     );
     assert!(cache.by_app.contains_key(&AppType::Claude));
 
@@ -143,11 +150,7 @@ fn app_data_send_failure_does_not_block_retry() {
 
     assert_eq!(
         cache.pending_by_app.get(&AppType::Codex).copied(),
-        Some(PendingDataLoad {
-            request_id: 2,
-            generation: 0,
-            app_state_epoch: 0,
-        })
+        Some(pending_app_data(2))
     );
     assert!(matches!(
         retry_rx.recv().expect("retry should send request"),
@@ -167,14 +170,9 @@ fn stale_app_data_result_does_not_overwrite_current_app() {
     data.providers.current_id = "claude-current".to_string();
 
     let mut cache = UiDataByAppCache::default();
-    cache.pending_by_app.insert(
-        AppType::Codex,
-        PendingDataLoad {
-            request_id: 1,
-            generation: 0,
-            app_state_epoch: 0,
-        },
-    );
+    cache
+        .pending_by_app
+        .insert(AppType::Codex, pending_app_data(1));
 
     let mut loaded = UiData::default();
     loaded.providers.current_id = "codex-loaded".to_string();
@@ -185,6 +183,7 @@ fn stale_app_data_result_does_not_overwrite_current_app() {
         &mut cache,
         None,
         AppDataMsg::Loaded {
+            kind: AppDataLoadKind::Snapshot,
             request_id: 1,
             generation: 0,
             app_state_epoch: 0,
@@ -209,14 +208,9 @@ fn app_data_result_preserves_usage_pricing_that_finished_first() {
     let mut app = App::new(Some(AppType::Codex));
     let mut data = UiData::default();
     let mut cache = UiDataByAppCache::default();
-    cache.pending_by_app.insert(
-        AppType::Codex,
-        PendingDataLoad {
-            request_id: 2,
-            generation: 0,
-            app_state_epoch: 0,
-        },
-    );
+    cache
+        .pending_by_app
+        .insert(AppType::Codex, pending_app_data(2));
     cache.pending_usage_pricing_by_key.insert(
         (AppType::Codex, data::UsageRangePreset::SevenDays),
         PendingDataLoad {
@@ -269,6 +263,7 @@ fn app_data_result_preserves_usage_pricing_that_finished_first() {
         &mut cache,
         None,
         AppDataMsg::Loaded {
+            kind: AppDataLoadKind::Snapshot,
             request_id: 2,
             generation: 0,
             app_state_epoch: 0,
@@ -288,14 +283,9 @@ fn app_data_result_after_cache_invalidation_is_ignored() {
     let mut data = UiData::default();
     data.providers.current_id = "current-after-reload".to_string();
     let mut cache = UiDataByAppCache::default();
-    cache.pending_by_app.insert(
-        AppType::Codex,
-        PendingDataLoad {
-            request_id: 4,
-            generation: 0,
-            app_state_epoch: 0,
-        },
-    );
+    cache
+        .pending_by_app
+        .insert(AppType::Codex, pending_app_data(4));
 
     cache.handle_data_reloaded(&app, &data, CacheInvalidation::DataReloaded);
 
@@ -307,6 +297,7 @@ fn app_data_result_after_cache_invalidation_is_ignored() {
         &mut cache,
         None,
         AppDataMsg::Loaded {
+            kind: AppDataLoadKind::Snapshot,
             request_id: 4,
             generation: 0,
             app_state_epoch: 0,
@@ -329,14 +320,9 @@ fn no_op_reload_candidate_preserves_pending_app_data_load() {
     let mut proxy_loading = RequestTracker::default();
     let mut webdav_loading = RequestTracker::default();
     let mut update_check = RequestTracker::default();
-    cache.pending_by_app.insert(
-        AppType::Codex,
-        PendingDataLoad {
-            request_id: 7,
-            generation: 0,
-            app_state_epoch: 0,
-        },
-    );
+    cache
+        .pending_by_app
+        .insert(AppType::Codex, pending_app_data(7));
 
     handle_tui_action(
         &mut terminal,
@@ -368,13 +354,250 @@ fn no_op_reload_candidate_preserves_pending_app_data_load() {
 
     assert_eq!(
         cache.pending_by_app.get(&AppType::Codex).copied(),
-        Some(PendingDataLoad {
-            request_id: 7,
-            generation: 0,
-            app_state_epoch: 0,
-        })
+        Some(pending_app_data(7))
     );
     assert_eq!(cache.data_generation, 0);
+}
+
+#[test]
+fn initial_app_data_result_restores_startup_overlay_and_caches_loaded_data() {
+    let mut app = App::new(Some(AppType::Claude));
+    let mut data = UiData::default();
+    let mut cache = UiDataByAppCache::default();
+    cache.pending_by_app.insert(
+        AppType::Claude,
+        PendingAppDataLoad {
+            kind: AppDataLoadKind::Initial,
+            request_id: 1,
+            generation: 0,
+            app_state_epoch: 0,
+        },
+    );
+    cache.incomplete_by_app.insert(AppType::Claude);
+    app.overlay = startup_loading_overlay();
+    let mut startup_overlay = Some(Overlay::Confirm(ConfirmOverlay {
+        title: "Visible apps".to_string(),
+        message: "Review detected apps".to_string(),
+        action: ConfirmAction::VisibleAppsAutoDetection,
+    }));
+
+    let mut loaded = UiData::default();
+    loaded.providers.current_id = "loaded-current".to_string();
+    loaded.proxy.running = true;
+    loaded.proxy.estimated_input_tokens_total = 10;
+    loaded.proxy.estimated_output_tokens_total = 20;
+
+    let handled = handle_initial_app_data_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        &mut startup_overlay,
+        None,
+        AppDataMsg::Loaded {
+            kind: AppDataLoadKind::Initial,
+            request_id: 1,
+            generation: 0,
+            app_state_epoch: 0,
+            app_type: AppType::Claude,
+            result: Ok(loaded),
+        },
+    )
+    .expect("initial app data result should be handled");
+
+    assert!(handled);
+    assert_eq!(data.providers.current_id, "loaded-current");
+    assert_eq!(
+        cache
+            .by_app
+            .get(&AppType::Claude)
+            .map(|cached| cached.providers.current_id.as_str()),
+        Some("loaded-current")
+    );
+    assert!(cache.pending_by_app.is_empty());
+    assert!(!cache.incomplete_by_app.contains(&AppType::Claude));
+    assert!(startup_overlay.is_none());
+    assert!(matches!(
+        app.overlay,
+        Overlay::Confirm(ConfirmOverlay {
+            action: ConfirmAction::VisibleAppsAutoDetection,
+            ..
+        })
+    ));
+    assert_eq!(app.proxy_visual_state, Some(true));
+    assert!(app.proxy_visual_transition.is_none());
+    assert_eq!(app.proxy_activity_last_input_tokens, Some(10));
+    assert_eq!(app.proxy_activity_last_output_tokens, Some(20));
+}
+
+#[test]
+fn initial_app_data_error_returns_before_empty_shell_is_marked_loaded() {
+    let mut app = App::new(Some(AppType::Claude));
+    let mut data = UiData::default();
+    data.providers.current_id = "empty-shell".to_string();
+    let mut cache = UiDataByAppCache::default();
+    cache.pending_by_app.insert(
+        AppType::Claude,
+        PendingAppDataLoad {
+            kind: AppDataLoadKind::Initial,
+            request_id: 1,
+            generation: 0,
+            app_state_epoch: 0,
+        },
+    );
+    cache.incomplete_by_app.insert(AppType::Claude);
+    let mut startup_overlay = None;
+
+    let err = handle_initial_app_data_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        &mut startup_overlay,
+        None,
+        AppDataMsg::Loaded {
+            kind: AppDataLoadKind::Initial,
+            request_id: 1,
+            generation: 0,
+            app_state_epoch: 0,
+            app_type: AppType::Claude,
+            result: Err("boom".to_string()),
+        },
+    )
+    .expect_err("initial load failure should be returned");
+
+    assert_eq!(err.to_string(), "boom");
+    assert_eq!(data.providers.current_id, "empty-shell");
+    assert!(cache.by_app.is_empty());
+    assert!(cache.incomplete_by_app.contains(&AppType::Claude));
+}
+
+#[test]
+fn initial_app_data_drain_prioritizes_error_before_quit_input() {
+    let mut app = App::new(Some(AppType::Claude));
+    let mut data = UiData::default();
+    let mut cache = UiDataByAppCache::default();
+    cache.pending_by_app.insert(
+        AppType::Claude,
+        PendingAppDataLoad {
+            kind: AppDataLoadKind::Initial,
+            request_id: 1,
+            generation: 0,
+            app_state_epoch: 0,
+        },
+    );
+    cache.incomplete_by_app.insert(AppType::Claude);
+    let mut startup_overlay = None;
+    let (_tx, rx) = mpsc::channel();
+    _tx.send(AppDataMsg::Loaded {
+        kind: AppDataLoadKind::Initial,
+        request_id: 1,
+        generation: 0,
+        app_state_epoch: 0,
+        app_type: AppType::Claude,
+        result: Err("boom".to_string()),
+    })
+    .expect("queue initial load error");
+
+    let quit_key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(is_initial_loading_quit_key(&quit_key));
+    let err = drain_initial_app_data_messages(
+        &mut app,
+        &mut data,
+        &mut cache,
+        &mut startup_overlay,
+        None,
+        &rx,
+    )
+    .expect_err("initial load error should win over quit input");
+
+    assert_eq!(err.to_string(), "boom");
+    assert!(cache.by_app.is_empty());
+    assert!(cache.incomplete_by_app.contains(&AppType::Claude));
+}
+
+#[test]
+fn initial_loading_input_polling_stops_after_success_or_failure() {
+    assert!(should_poll_initial_loading_input(true, false));
+    assert!(!should_poll_initial_loading_input(false, false));
+    assert!(!should_poll_initial_loading_input(true, true));
+    assert!(!should_poll_initial_loading_input(false, true));
+}
+
+#[test]
+fn initial_loading_quit_waits_for_success_and_never_hides_error() {
+    assert!(!should_exit_after_initial_loading(true, false, true));
+    assert!(!should_exit_after_initial_loading(false, true, true));
+    assert!(!should_exit_after_initial_loading(false, false, false));
+    assert!(should_exit_after_initial_loading(false, false, true));
+}
+
+#[test]
+fn initial_loading_only_accepts_quit_keys() {
+    assert!(is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )));
+    assert!(is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Char('Q'),
+        KeyModifiers::NONE,
+    )));
+    assert!(is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    assert!(is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(!is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Char('1'),
+        KeyModifiers::NONE,
+    )));
+    assert!(!is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    assert!(!is_initial_loading_quit_key(&KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::NONE,
+    )));
+}
+
+#[test]
+fn initial_loading_event_quit_detection_only_uses_pressed_quit_keys() {
+    let pressed_quit = event::Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(initial_loading_event_requests_quit(&pressed_quit));
+
+    let mut released_quit = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    released_quit.kind = KeyEventKind::Release;
+    assert!(!initial_loading_event_requests_quit(&event::Event::Key(
+        released_quit
+    )));
+
+    assert!(!initial_loading_event_requests_quit(&event::Event::Mouse(
+        event::MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    )));
+}
+
+#[test]
+fn initial_loading_quit_recording_ignores_non_quit_events() {
+    let mut quit_requested = false;
+
+    record_initial_loading_quit_event(
+        &mut quit_requested,
+        &event::Event::Key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE)),
+    );
+    assert!(!quit_requested);
+
+    record_initial_loading_quit_event(
+        &mut quit_requested,
+        &event::Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+    );
+    assert!(quit_requested);
 }
 
 #[test]
