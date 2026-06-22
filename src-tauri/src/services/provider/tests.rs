@@ -1063,6 +1063,131 @@ fn preview_switch_live_conflicts_reports_real_local_provider_changes() {
     assert_eq!(conflicts[0].incoming, "token2");
 }
 
+#[test]
+#[serial]
+fn preview_switch_live_conflicts_ignores_missing_claude_settings_file() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = TestEnvGuard::isolated(temp_home.path());
+    std::fs::create_dir_all(crate::config::get_claude_config_dir()).expect("create ~/.claude");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "p1".to_string();
+        manager.providers.insert(
+            "p1".to_string(),
+            Provider::with_id(
+                "p1".to_string(),
+                "First".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token1",
+                        "ANTHROPIC_BASE_URL": "https://claude.one"
+                    }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "p2".to_string(),
+            Provider::with_id(
+                "p2".to_string(),
+                "Second".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token2",
+                        "ANTHROPIC_BASE_URL": "https://claude.two"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = state_from_config(config);
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .expect("set db current provider");
+
+    let conflicts = ProviderService::preview_switch_live_conflicts(&state, AppType::Claude, "p2")
+        .expect("preview switch conflicts");
+
+    assert_eq!(
+        conflicts,
+        Vec::new(),
+        "missing live settings should be treated as an empty destination, not as removed current-provider fields"
+    );
+}
+
+#[test]
+#[serial]
+fn switch_claude_with_missing_settings_file_creates_target_live_settings() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = TestEnvGuard::isolated(temp_home.path());
+    std::fs::create_dir_all(crate::config::get_claude_config_dir()).expect("create ~/.claude");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "p1".to_string();
+        manager.providers.insert(
+            "p1".to_string(),
+            Provider::with_id(
+                "p1".to_string(),
+                "First".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token1",
+                        "ANTHROPIC_BASE_URL": "https://claude.one"
+                    }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "p2".to_string(),
+            Provider::with_id(
+                "p2".to_string(),
+                "Second".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token2",
+                        "ANTHROPIC_BASE_URL": "https://claude.two"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = state_from_config(config);
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .expect("set db current provider");
+
+    ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+
+    let live: Value = read_json_file(&get_claude_settings_path()).expect("read live settings");
+    assert_eq!(
+        live.pointer("/env/ANTHROPIC_AUTH_TOKEN")
+            .and_then(Value::as_str),
+        Some("token2")
+    );
+    assert_eq!(
+        live.pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str),
+        Some("https://claude.two")
+    );
+}
+
 #[tokio::test]
 #[serial]
 async fn switch_updates_running_proxy_takeover_target_without_restart() {
@@ -2709,6 +2834,75 @@ fn provider_update_does_not_infer_claude_common_config_opt_in() {
             .and_then(Value::as_bool),
         Some(false),
         "matching common fields remain provider-owned when not explicitly enabled"
+    );
+}
+
+#[test]
+#[serial]
+fn provider_update_keeps_claude_live_conflict_detection_without_switch_base() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = TestEnvGuard::isolated(temp_home.path());
+    std::fs::create_dir_all(crate::config::get_claude_config_dir())
+        .expect("create ~/.claude (initialized)");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "p1".to_string();
+        manager.providers.insert(
+            "p1".to_string(),
+            Provider::with_id(
+                "p1".to_string(),
+                "First".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token-old",
+                        "ANTHROPIC_BASE_URL": "https://claude.old"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    write_json_file(
+        &get_claude_settings_path(),
+        &json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token-old",
+                "ANTHROPIC_BASE_URL": "https://claude.old"
+            }
+        }),
+    )
+    .expect("seed live settings");
+
+    let state = state_from_config(config);
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .expect("set db current provider");
+
+    let provider = Provider::with_id(
+        "p1".to_string(),
+        "First Updated".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token-new",
+                "ANTHROPIC_BASE_URL": "https://claude.new"
+            }
+        }),
+        None,
+    );
+
+    let err = ProviderService::update(&state, AppType::Claude, provider)
+        .expect_err("update should still use normal live conflict detection");
+    let message = err.to_string();
+    assert!(
+        message.contains("env.ANTHROPIC_AUTH_TOKEN"),
+        "expected token conflict, got: {message}"
     );
 }
 

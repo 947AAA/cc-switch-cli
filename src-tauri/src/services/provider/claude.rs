@@ -270,7 +270,7 @@ impl ProviderService {
 
     pub(super) fn prepare_claude_live_write(
         provider: &Provider,
-        previous_provider: Option<&Provider>,
+        live_merge_base: Option<&Value>,
         common_config_snippet: Option<&str>,
         previous_common_config_snippet: Option<&str>,
         apply_common_config: bool,
@@ -310,12 +310,12 @@ impl ProviderService {
         } else {
             json!({})
         };
-        let settings = match previous_provider {
-            Some(previous_provider) => live_merge::merge_json_with_base_live(
+        let settings = match live_merge_base {
+            Some(base) => live_merge::merge_json_with_base_live(
                 &AppType::Claude,
                 "settings.json",
                 local,
-                &previous_provider.settings_config,
+                base,
                 &content_to_write,
                 resolution,
             )?,
