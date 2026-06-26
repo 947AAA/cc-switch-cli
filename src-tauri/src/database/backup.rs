@@ -15,6 +15,28 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+/// A binary database backup snapshot, serialized for the web/UI list.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbBackupEntry {
+    pub filename: String,
+    pub size_bytes: u64,
+    pub created_at: String,
+}
+
+/// Reject path separators / traversal in a backup file name.
+fn sanitize_backup_name(name: &str) -> Result<String, AppError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+    {
+        return Err(AppError::InvalidInput("非法的备份文件名".to_string()));
+    }
+    Ok(trimmed.to_string())
+}
+
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
 const SYNC_IMPORT_RESTORE_TABLES: &[&str] = &[
@@ -503,6 +525,96 @@ impl Database {
 
         Self::cleanup_db_backups(&backup_dir)?;
         Ok(Some(backup_path))
+    }
+
+    /// The `<config>/backups` directory next to the database file.
+    fn backups_dir(&self) -> Result<PathBuf, AppError> {
+        let db_path = self
+            .db_path
+            .as_deref()
+            .ok_or_else(|| AppError::Config("内存数据库无备份目录".to_string()))?;
+        Ok(db_path
+            .parent()
+            .ok_or_else(|| AppError::Config("无效的数据库路径".to_string()))?
+            .join("backups"))
+    }
+
+    /// Resolve a backup filename to an absolute path, rejecting path traversal.
+    fn backup_path(&self, filename: &str) -> Result<PathBuf, AppError> {
+        Ok(self.backups_dir()?.join(sanitize_backup_name(filename)?))
+    }
+
+    /// List the `.db` snapshots in the backups directory, newest first.
+    pub fn list_db_backups(&self) -> Result<Vec<DbBackupEntry>, AppError> {
+        let dir = self.backups_dir()?;
+        let read_dir = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(AppError::Config(format!("读取备份目录失败: {e}"))),
+        };
+        let mut entries = Vec::new();
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("db") {
+                continue;
+            }
+            let (Some(filename), Ok(meta)) =
+                (path.file_name().and_then(|n| n.to_str()), entry.metadata())
+            else {
+                continue;
+            };
+            let created_at = meta
+                .modified()
+                .ok()
+                .map(|t| chrono::DateTime::<Utc>::from(t).to_rfc3339())
+                .unwrap_or_default();
+            entries.push(DbBackupEntry {
+                filename: filename.to_string(),
+                size_bytes: meta.len(),
+                created_at,
+            });
+        }
+        entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(entries)
+    }
+
+    /// Delete a named backup snapshot.
+    pub fn delete_db_backup(&self, filename: &str) -> Result<(), AppError> {
+        fs::remove_file(self.backup_path(filename)?)
+            .map_err(|e| AppError::Config(format!("删除备份失败: {e}")))
+    }
+
+    /// Rename a backup snapshot (keeping the `.db` extension). Returns the new name.
+    pub fn rename_db_backup(&self, old_filename: &str, new_name: &str) -> Result<String, AppError> {
+        let src = self.backup_path(old_filename)?;
+        let mut new_file = sanitize_backup_name(new_name)?;
+        if !new_file.ends_with(".db") {
+            new_file.push_str(".db");
+        }
+        let dest = self.backups_dir()?.join(&new_file);
+        if dest.exists() {
+            return Err(AppError::Config("同名备份已存在".to_string()));
+        }
+        fs::rename(&src, &dest).map_err(|e| AppError::Config(format!("重命名备份失败: {e}")))?;
+        Ok(new_file)
+    }
+
+    /// Restore a backup snapshot into the live database in place (SQLite backup
+    /// API). The caller must refresh any in-memory snapshot afterwards
+    /// (`AppState::refresh_config_from_db`).
+    pub fn restore_db_backup(&self, filename: &str) -> Result<(), AppError> {
+        let path = self.backup_path(filename)?;
+        if !path.is_file() {
+            return Err(AppError::Config("备份文件不存在".to_string()));
+        }
+        let src = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut dest = lock_conn!(self.conn);
+        let backup = Backup::new(&src, &mut dest).map_err(|e| AppError::Database(e.to_string()))?;
+        backup
+            .run_to_completion(5, Duration::from_millis(25), None)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     fn create_unique_backup_db_connection(
