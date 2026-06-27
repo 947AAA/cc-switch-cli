@@ -177,7 +177,8 @@ impl App {
                 Action::None
             }
             KeyCode::Down => {
-                *selected = (*selected + 1).min(4);
+                // 3 options: Auto / Symlink / Copy (indices 0..=2).
+                *selected = (*selected + 1).min(2);
                 Action::None
             }
             KeyCode::Enter => {

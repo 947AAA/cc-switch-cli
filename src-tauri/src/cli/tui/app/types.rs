@@ -679,7 +679,6 @@ pub enum Overlay {
         selected_idx: usize,
         selected: HashSet<String>,
     },
-    #[allow(dead_code)]
     SkillsSyncMethodPicker {
         selected: usize,
     },

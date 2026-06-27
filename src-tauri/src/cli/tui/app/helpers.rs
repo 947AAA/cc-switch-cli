@@ -1276,8 +1276,6 @@ pub(crate) fn snippet_picker_app_type(index: usize) -> AppType {
     app_type_for_picker_index(index)
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn sync_method_picker_index(method: SyncMethod) -> usize {
     match method {
         SyncMethod::Auto => 0,
