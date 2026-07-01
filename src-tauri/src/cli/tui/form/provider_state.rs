@@ -161,6 +161,11 @@ impl ProviderAddFormState {
             claude_disable_auto_upgrade: false,
             claude_disable_auto_upgrade_touched: false,
             claude_quick_config_idx: 0,
+            codex_goal_mode: false,
+            codex_goal_mode_touched: false,
+            codex_remote_compaction: false,
+            codex_remote_compaction_touched: false,
+            codex_quick_config_idx: 0,
             codex_oauth_account_id: None,
             codex_fast_mode: false,
             codex_base_url: TextInput::new(codex_defaults.0),
@@ -391,6 +396,10 @@ impl ProviderAddFormState {
                     fields.push(ProviderAddField::ClaudeApiFormat);
                     fields.push(ProviderAddField::CodexLocalRouting);
                 }
+                // Goal mode applies to every Codex provider, so the quick-config
+                // menu is available for official providers too (only its remote
+                // compaction toggle is custom-only).
+                fields.push(ProviderAddField::CodexQuickConfig);
             }
             AppType::Gemini => {
                 fields.push(ProviderAddField::GeminiAuthType);
@@ -535,6 +544,9 @@ impl ProviderAddFormState {
             ProviderAddField::CodexOAuthAccount
             | ProviderAddField::CodexFastMode
             | ProviderAddField::CodexLocalRouting
+            | ProviderAddField::CodexQuickConfig
+            | ProviderAddField::CodexGoalMode
+            | ProviderAddField::CodexRemoteCompaction
             | ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeApiFormat
@@ -594,6 +606,9 @@ impl ProviderAddFormState {
             ProviderAddField::CodexOAuthAccount
             | ProviderAddField::CodexFastMode
             | ProviderAddField::CodexLocalRouting
+            | ProviderAddField::CodexQuickConfig
+            | ProviderAddField::CodexGoalMode
+            | ProviderAddField::CodexRemoteCompaction
             | ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeApiFormat
@@ -691,6 +706,66 @@ impl ProviderAddFormState {
     }
 
     pub fn close_claude_quick_config_page(&mut self) {
+        self.page = ProviderFormPage::Main;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+    }
+
+    pub fn toggle_codex_goal_mode(&mut self) {
+        self.codex_goal_mode = !self.codex_goal_mode;
+        self.codex_goal_mode_touched = true;
+    }
+
+    pub fn toggle_codex_remote_compaction(&mut self) {
+        self.codex_remote_compaction = !self.codex_remote_compaction;
+        self.codex_remote_compaction_touched = true;
+    }
+
+    /// The Codex quick toggles, in upstream order. They live on the Codex
+    /// "快捷配置菜单" sub-page rather than the main field list. Goal mode is
+    /// available for every Codex provider; remote compaction is only meaningful
+    /// for custom providers (upstream `showRemoteCompaction = category != "official"`).
+    pub fn codex_quick_config_fields(&self) -> Vec<ProviderAddField> {
+        let mut fields = vec![ProviderAddField::CodexGoalMode];
+        if !self.is_codex_official_provider() {
+            fields.push(ProviderAddField::CodexRemoteCompaction);
+        }
+        fields
+    }
+
+    pub fn codex_quick_config_enabled_count(&self) -> usize {
+        self.codex_quick_config_fields()
+            .iter()
+            .filter(|field| match field {
+                ProviderAddField::CodexGoalMode => self.codex_goal_mode,
+                ProviderAddField::CodexRemoteCompaction => self.codex_remote_compaction,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn selected_codex_quick_config_field(&self) -> Option<ProviderAddField> {
+        let fields = self.codex_quick_config_fields();
+        fields
+            .get(
+                self.codex_quick_config_idx
+                    .min(fields.len().saturating_sub(1)),
+            )
+            .copied()
+    }
+
+    pub fn open_codex_quick_config_page(&mut self) {
+        if !matches!(self.app_type, AppType::Codex) {
+            return;
+        }
+        self.page = ProviderFormPage::CodexQuickConfig;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+        let len = self.codex_quick_config_fields().len();
+        self.codex_quick_config_idx = self.codex_quick_config_idx.min(len.saturating_sub(1));
+    }
+
+    pub fn close_codex_quick_config_page(&mut self) {
         self.page = ProviderFormPage::Main;
         self.focus = FormFocus::Fields;
         self.editing = false;

@@ -972,6 +972,106 @@ fn provider_add_form_claude_quick_config_menu_opens_and_toggles() {
 }
 
 #[test]
+fn provider_add_form_codex_collapses_quick_toggles_into_menu() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("myco");
+    form.name.set("My Codex");
+    form.codex_base_url.set("https://api.example.com/v1");
+
+    let fields = form.fields();
+    assert!(fields.contains(&ProviderAddField::CodexQuickConfig));
+    // The two toggles live on the sub-page, not the main field list.
+    assert!(!fields.contains(&ProviderAddField::CodexGoalMode));
+    assert!(!fields.contains(&ProviderAddField::CodexRemoteCompaction));
+    assert_eq!(
+        form.codex_quick_config_fields(),
+        vec![
+            ProviderAddField::CodexGoalMode,
+            ProviderAddField::CodexRemoteCompaction,
+        ]
+    );
+}
+
+#[test]
+fn provider_add_form_codex_quick_config_menu_opens_and_writes_config() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("myco");
+    form.name.set("My Codex");
+    form.codex_base_url.set("https://api.example.com/v1");
+
+    form.open_codex_quick_config_page();
+    assert!(matches!(
+        form.page,
+        super::ProviderFormPage::CodexQuickConfig
+    ));
+    assert_eq!(form.codex_quick_config_enabled_count(), 0);
+
+    form.toggle_codex_goal_mode();
+    form.toggle_codex_remote_compaction();
+    assert_eq!(form.codex_quick_config_enabled_count(), 2);
+
+    let provider = form.to_provider_json_value();
+    let config = provider["settingsConfig"]["config"]
+        .as_str()
+        .expect("codex config should be a string");
+    assert!(config.contains("goals = true"), "{config}");
+    assert!(config.contains("name = \"OpenAI\""), "{config}");
+
+    form.close_codex_quick_config_page();
+    assert!(matches!(form.page, super::ProviderFormPage::Main));
+}
+
+#[test]
+fn provider_add_form_codex_quick_config_round_trips_from_config() {
+    let config = "model_provider = \"myco\"\nmodel = \"gpt-x\"\n\n[features]\ngoals = true\n\n[model_providers.myco]\nname = \"OpenAI\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\n";
+    let provider = Provider::with_id(
+        "myco".to_string(),
+        "My Codex".to_string(),
+        json!({ "config": config }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
+    assert!(form.codex_goal_mode);
+    assert!(form.codex_remote_compaction);
+    assert_eq!(form.codex_quick_config_enabled_count(), 2);
+}
+
+#[test]
+fn provider_add_form_codex_official_offers_goal_mode_only() {
+    let mut provider = Provider::with_id(
+        "official".to_string(),
+        "Codex Official".to_string(),
+        json!({ "config": "", "auth": {} }),
+        None,
+    );
+    provider.category = Some("official".to_string());
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
+    assert!(form.is_codex_official_provider());
+
+    let fields = form.fields();
+    // The menu is reachable for official providers, but the custom-only Codex
+    // config rows are not.
+    assert!(fields.contains(&ProviderAddField::CodexQuickConfig));
+    assert!(!fields.contains(&ProviderAddField::CodexLocalRouting));
+    // Upstream shows remote compaction only for non-official providers.
+    assert_eq!(
+        form.codex_quick_config_fields(),
+        vec![ProviderAddField::CodexGoalMode]
+    );
+
+    // Goal mode is a top-level [features] setting and still persists for
+    // official providers.
+    form.toggle_codex_goal_mode();
+    let out = form.to_provider_json_value();
+    let config = out["settingsConfig"]["config"]
+        .as_str()
+        .expect("codex config should be a string");
+    assert!(config.contains("goals = true"), "{config}");
+}
+
+#[test]
 fn provider_add_form_claude_advanced_section_groups_model_fields() {
     let form = ProviderAddFormState::new(AppType::Claude);
     let fields = form.fields();

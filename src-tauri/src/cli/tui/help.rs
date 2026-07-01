@@ -163,6 +163,20 @@ fn current_help_target(app: &App) -> HelpTarget {
         };
     }
 
+    if matches!(provider.page, ProviderFormPage::CodexQuickConfig) {
+        return match provider.focus {
+            FormFocus::Fields => {
+                provider
+                    .selected_codex_quick_config_field()
+                    .map_or(HelpTarget::Empty, |field| HelpTarget::ProviderField {
+                        app_type: provider.app_type.clone(),
+                        field,
+                    })
+            }
+            _ => HelpTarget::Empty,
+        };
+    }
+
     match provider.focus {
         FormFocus::Templates if matches!(provider.mode, FormMode::Add) => {
             HelpTarget::ProviderTemplate
@@ -327,6 +341,27 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
             help_lines(
                 "打开 Claude 快捷配置菜单，集中管理隐藏 AI 署名、Teammates 模式、启用 Tool Search、禁用自动升级等开关。",
                 "Opens the Claude quick-config menu that groups the hide-AI-attribution, Teammates, Tool Search, and disable-auto-upgrade toggles.",
+            ),
+        ),
+        ProviderAddField::CodexQuickConfig => HelpContent::new(
+            texts::tui_label_codex_quick_config(),
+            help_lines(
+                "打开 Codex 快捷配置菜单，集中管理启用 Goal mode、启用远程压缩等开关。",
+                "Opens the Codex quick-config menu that groups the Goal-mode and remote-compaction toggles.",
+            ),
+        ),
+        ProviderAddField::CodexGoalMode => HelpContent::new(
+            texts::tui_label_codex_goal_mode(),
+            help_lines(
+                "启用 Codex 的 Goal mode，写入 config.toml 的 [features] goals = true；关闭时移除该项。",
+                "Enables Codex Goal mode by writing [features] goals = true to config.toml; turning it off removes it.",
+            ),
+        ),
+        ProviderAddField::CodexRemoteCompaction => HelpContent::new(
+            texts::tui_label_codex_remote_compaction(),
+            help_lines(
+                "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩；关闭时恢复原供应商名称。",
+                "When enabled, sets the current model_providers entry's name to \"OpenAI\" so Codex attempts remote compaction; turning it off restores the provider name.",
             ),
         ),
         ProviderAddField::ClaudeHideAttribution => HelpContent::new(

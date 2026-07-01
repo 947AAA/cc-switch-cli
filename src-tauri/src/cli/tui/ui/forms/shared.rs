@@ -41,6 +41,7 @@ pub(crate) fn add_form_key_items(
                     Some(
                         ProviderAddField::ClaudeModelConfig
                         | ProviderAddField::ClaudeQuickConfig
+                        | ProviderAddField::CodexQuickConfig
                         | ProviderAddField::CodexOAuthAccount
                         | ProviderAddField::CodexLocalRouting
                         | ProviderAddField::CommonSnippet
@@ -54,6 +55,8 @@ pub(crate) fn add_form_key_items(
                         | ProviderAddField::ClaudeTeammates
                         | ProviderAddField::ClaudeToolSearch
                         | ProviderAddField::ClaudeDisableAutoUpgrade
+                        | ProviderAddField::CodexGoalMode
+                        | ProviderAddField::CodexRemoteCompaction
                         | ProviderAddField::CodexFastMode
                         | ProviderAddField::OpenClawApiProtocol
                         | ProviderAddField::OpenClawUserAgent
@@ -80,7 +83,7 @@ pub(crate) fn add_form_key_items(
     keys
 }
 
-pub(crate) fn claude_quick_config_form_key_items() -> Vec<(&'static str, &'static str)> {
+pub(crate) fn quick_config_form_key_items() -> Vec<(&'static str, &'static str)> {
     // Ctrl+S only saves from the outermost form page, so it is not advertised
     // on this sub-page; Esc returns to the main page.
     vec![

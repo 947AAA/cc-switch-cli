@@ -1862,6 +1862,38 @@ pub mod texts {
         }
     }
 
+    pub fn tui_label_codex_quick_config() -> &'static str {
+        if is_chinese() {
+            "快捷配置菜单"
+        } else {
+            "Quick Config Menu"
+        }
+    }
+
+    pub fn tui_codex_quick_config_summary(enabled: usize, total: usize) -> String {
+        if is_chinese() {
+            format!("已启用 {}/{}", enabled, total)
+        } else {
+            format!("{}/{} enabled", enabled, total)
+        }
+    }
+
+    pub fn tui_label_codex_goal_mode() -> &'static str {
+        if is_chinese() {
+            "启用 Goal mode"
+        } else {
+            "Enable Goal mode"
+        }
+    }
+
+    pub fn tui_label_codex_remote_compaction() -> &'static str {
+        if is_chinese() {
+            "启用远程压缩"
+        } else {
+            "Enable remote compaction"
+        }
+    }
+
     pub fn tui_label_claude_hide_attribution() -> &'static str {
         if is_chinese() {
             "隐藏 AI 署名"

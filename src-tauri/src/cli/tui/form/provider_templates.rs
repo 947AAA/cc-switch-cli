@@ -441,6 +441,8 @@ impl ProviderAddFormState {
                     self.codex_chat_reasoning = defaults.codex_chat_reasoning;
                     self.codex_model_catalog = defaults.codex_model_catalog;
                     self.codex_local_routing_enabled = defaults.codex_local_routing_enabled;
+                    self.codex_goal_mode = defaults.codex_goal_mode;
+                    self.codex_remote_compaction = defaults.codex_remote_compaction;
                     self.codex_local_routing_field_idx = defaults.codex_local_routing_field_idx;
                     self.codex_model_catalog_idx = defaults.codex_model_catalog_idx;
                     self.codex_model_catalog_field = defaults.codex_model_catalog_field;

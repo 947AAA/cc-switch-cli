@@ -59,6 +59,10 @@ impl App {
                 provider.close_claude_quick_config_page();
                 return Action::None;
             }
+            if matches!(provider.page, form::ProviderFormPage::CodexQuickConfig) {
+                provider.close_codex_quick_config_page();
+                return Action::None;
+            }
         }
 
         let has_unsaved_changes = self

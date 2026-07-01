@@ -196,6 +196,9 @@ fn populate_codex_form(form: &mut ProviderAddFormState, provider: &Provider) {
         if let Some(env_key) = parsed.env_key {
             form.codex_env_key.set(env_key);
         }
+        form.codex_goal_mode = crate::codex_config::is_codex_goal_mode_enabled(config);
+        form.codex_remote_compaction =
+            crate::codex_config::is_codex_remote_compaction_enabled(config);
     }
     if let Some(auth) = provider
         .settings_config

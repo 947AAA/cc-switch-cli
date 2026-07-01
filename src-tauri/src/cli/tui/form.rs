@@ -206,6 +206,9 @@ pub enum ProviderAddField {
     CodexModel,
     CodexAdvancedDivider,
     CodexLocalRouting,
+    CodexQuickConfig,
+    CodexGoalMode,
+    CodexRemoteCompaction,
     #[allow(dead_code)]
     CodexWireApi,
     #[allow(dead_code)]
@@ -244,6 +247,7 @@ pub enum ProviderAddField {
 pub enum ProviderFormPage {
     Main,
     ClaudeQuickConfig,
+    CodexQuickConfig,
     CodexLocalRouting,
     CodexModelCatalog,
     UsageQuery,
@@ -454,6 +458,11 @@ pub struct ProviderAddFormState {
     pub claude_disable_auto_upgrade: bool,
     claude_disable_auto_upgrade_touched: bool,
     pub claude_quick_config_idx: usize,
+    pub codex_goal_mode: bool,
+    codex_goal_mode_touched: bool,
+    pub codex_remote_compaction: bool,
+    codex_remote_compaction_touched: bool,
+    pub codex_quick_config_idx: usize,
     pub codex_oauth_account_id: Option<String>,
     pub codex_fast_mode: bool,
 

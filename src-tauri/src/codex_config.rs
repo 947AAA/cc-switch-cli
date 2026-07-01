@@ -1420,6 +1420,133 @@ pub fn update_codex_config_snippet(
     }
 }
 
+/// Whether Codex "Goal mode" is enabled, i.e. `[features] goals = true`.
+pub fn is_codex_goal_mode_enabled(config_text: &str) -> bool {
+    config_text
+        .parse::<toml_edit::DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("features")
+                .and_then(|features| features.as_table_like())
+                .and_then(|features| features.get("goals"))
+                .and_then(|goals| goals.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+/// Toggle Codex "Goal mode" (`[features] goals = true`) in a config.toml string.
+/// Disabling removes the key, and the `[features]` table if it becomes empty.
+pub fn set_codex_goal_mode(config_text: &str, enabled: bool) -> String {
+    let mut doc = match config_text.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => return config_text.to_string(),
+    };
+
+    if enabled {
+        if doc
+            .get("features")
+            .and_then(|item| item.as_table_like())
+            .is_none()
+        {
+            doc["features"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        if let Some(features) = doc["features"].as_table_like_mut() {
+            features.insert("goals", toml_edit::value(true));
+        }
+    } else if let Some(features) = doc
+        .get_mut("features")
+        .and_then(|item| item.as_table_like_mut())
+    {
+        features.remove("goals");
+        if features.is_empty() {
+            doc.as_table_mut().remove("features");
+        }
+    }
+
+    finalize_codex_config_text(doc)
+}
+
+/// Whether Codex "remote compaction" is enabled: the active custom
+/// `[model_providers.<id>]` entry has `name = "OpenAI"`.
+pub fn is_codex_remote_compaction_enabled(config_text: &str) -> bool {
+    let Ok(doc) = config_text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(provider_id) = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+    else {
+        return false;
+    };
+    if provider_id.is_empty() || !is_custom_codex_model_provider_id(provider_id) {
+        return false;
+    }
+    doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(provider_id))
+        .and_then(|section| section.as_table_like())
+        .and_then(|section| section.get("name"))
+        .and_then(|name| name.as_str())
+        == Some("OpenAI")
+}
+
+/// Toggle Codex "remote compaction". Enabling sets the active custom provider
+/// entry's `name` to "OpenAI"; disabling restores it to `fallback_name` (or the
+/// provider id when the fallback is blank). No-op for official/reserved
+/// providers or when the target section is missing.
+pub fn set_codex_remote_compaction(
+    config_text: &str,
+    enabled: bool,
+    fallback_name: &str,
+) -> String {
+    let mut doc = match config_text.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => return config_text.to_string(),
+    };
+    let Some(provider_id) = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(|value| value.trim().to_string())
+    else {
+        return config_text.to_string();
+    };
+    if provider_id.is_empty() || !is_custom_codex_model_provider_id(&provider_id) {
+        return config_text.to_string();
+    }
+    let Some(section) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|providers| providers.get_mut(&provider_id))
+        .and_then(|section| section.as_table_like_mut())
+    else {
+        return config_text.to_string();
+    };
+    let replacement = if enabled {
+        "OpenAI".to_string()
+    } else {
+        let fallback = fallback_name.trim();
+        if fallback.is_empty() {
+            provider_id.clone()
+        } else {
+            fallback.to_string()
+        }
+    };
+    section.insert("name", toml_edit::value(replacement));
+
+    finalize_codex_config_text(doc)
+}
+
+fn finalize_codex_config_text(doc: toml_edit::DocumentMut) -> String {
+    let result = doc.to_string();
+    let trimmed = result.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Normalize persisted Codex provider config to upstream semantics.
 ///
 /// Codex providers should keep `wire_api = "responses"` in the Codex config
@@ -1467,6 +1594,87 @@ fn non_empty(value: &str) -> Option<&str> {
 
 fn escape_toml_string(value: &str) -> String {
     value.replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod quick_config_toggle_tests {
+    use super::*;
+
+    fn base_config() -> String {
+        build_codex_provider_config_toml("myco", "https://api.example.com/v1", "gpt-x", "responses")
+    }
+
+    #[test]
+    fn goal_mode_round_trips() {
+        let cfg = base_config();
+        assert!(!is_codex_goal_mode_enabled(&cfg));
+
+        let on = set_codex_goal_mode(&cfg, true);
+        assert!(on.contains("[features]"));
+        assert!(on.contains("goals = true"));
+        assert!(is_codex_goal_mode_enabled(&on));
+
+        let off = set_codex_goal_mode(&on, false);
+        assert!(!off.contains("goals"));
+        // Empty [features] table is removed on disable.
+        assert!(!off.contains("[features]"));
+        assert!(!is_codex_goal_mode_enabled(&off));
+    }
+
+    #[test]
+    fn goal_mode_preserves_other_feature_keys() {
+        let cfg = format!("{}\n\n[features]\nother = true\n", base_config());
+        let off = set_codex_goal_mode(&set_codex_goal_mode(&cfg, true), false);
+        // Disabling only removes `goals`, keeping the rest of [features].
+        assert!(off.contains("[features]"));
+        assert!(off.contains("other = true"));
+        assert!(!is_codex_goal_mode_enabled(&off));
+    }
+
+    #[test]
+    fn remote_compaction_sets_and_restores_name() {
+        let cfg = base_config();
+        assert!(cfg.contains("name = \"myco\""));
+        assert!(!is_codex_remote_compaction_enabled(&cfg));
+
+        let on = set_codex_remote_compaction(&cfg, true, "myco");
+        assert!(on.contains("name = \"OpenAI\""));
+        assert!(is_codex_remote_compaction_enabled(&on));
+
+        let off = set_codex_remote_compaction(&on, false, "myco");
+        assert!(off.contains("name = \"myco\""));
+        assert!(!off.contains("name = \"OpenAI\""));
+        assert!(!is_codex_remote_compaction_enabled(&off));
+    }
+
+    #[test]
+    fn remote_compaction_empty_fallback_restores_active_provider_id() {
+        // The active TOML provider id ("custom") is what disable should restore,
+        // regardless of any external key the caller might have.
+        let cfg = "model_provider = \"custom\"\nmodel = \"gpt-x\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\n";
+        assert!(is_codex_remote_compaction_enabled(cfg));
+
+        let off = set_codex_remote_compaction(cfg, false, "");
+        assert!(off.contains("name = \"custom\""), "{off}");
+        assert!(!is_codex_remote_compaction_enabled(&off));
+    }
+
+    #[test]
+    fn remote_compaction_ignores_official_provider() {
+        // No custom model_provider → the toggle is a no-op and reads false.
+        let cfg = "model = \"gpt-x\"\n";
+        assert!(!is_codex_remote_compaction_enabled(cfg));
+        assert_eq!(set_codex_remote_compaction(cfg, true, ""), cfg);
+    }
+
+    #[test]
+    fn invalid_toml_is_returned_unchanged() {
+        let broken = "model_provider = \"myco\"\n[features"; // unterminated
+        assert_eq!(set_codex_goal_mode(broken, true), broken);
+        assert_eq!(set_codex_remote_compaction(broken, true, "myco"), broken);
+        assert!(!is_codex_goal_mode_enabled(broken));
+        assert!(!is_codex_remote_compaction_enabled(broken));
+    }
 }
 
 #[cfg(test)]

@@ -184,7 +184,37 @@ pub(crate) fn render_provider_add_form(
         provider.page,
         super::form::ProviderFormPage::ClaudeQuickConfig
     ) {
-        render_claude_quick_config_form(frame, app, provider, area, theme);
+        render_quick_config_form(
+            frame,
+            app,
+            provider,
+            area,
+            theme,
+            QuickConfigPage {
+                title: texts::tui_label_claude_quick_config(),
+                fields: &provider.claude_quick_config_fields(),
+                selected_idx: provider.claude_quick_config_idx,
+            },
+        );
+        return;
+    }
+
+    if matches!(
+        provider.page,
+        super::form::ProviderFormPage::CodexQuickConfig
+    ) {
+        render_quick_config_form(
+            frame,
+            app,
+            provider,
+            area,
+            theme,
+            QuickConfigPage {
+                title: texts::tui_label_codex_quick_config(),
+                fields: &provider.codex_quick_config_fields(),
+                selected_idx: provider.codex_quick_config_idx,
+            },
+        );
         return;
     }
 
@@ -465,18 +495,30 @@ pub(crate) fn render_provider_add_form(
     }
 }
 
-fn render_claude_quick_config_form(
+struct QuickConfigPage<'a> {
+    title: &'a str,
+    fields: &'a [ProviderAddField],
+    selected_idx: usize,
+}
+
+fn render_quick_config_form(
     frame: &mut Frame<'_>,
     app: &App,
     provider: &super::form::ProviderAddFormState,
     area: Rect,
     theme: &super::theme::Theme,
+    page: QuickConfigPage<'_>,
 ) {
+    let QuickConfigPage {
+        title,
+        fields,
+        selected_idx,
+    } = page;
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_label_claude_quick_config());
+        .title(title.to_string());
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -485,12 +527,7 @@ fn render_claude_quick_config_form(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    render_key_bar(
-        frame,
-        chunks[0],
-        theme,
-        &claude_quick_config_form_key_items(),
-    );
+    render_key_bar(frame, chunks[0], theme, &quick_config_form_key_items());
 
     let fields_block = Block::default()
         .borders(Borders::ALL)
@@ -500,7 +537,6 @@ fn render_claude_quick_config_form(
     frame.render_widget(fields_block.clone(), chunks[1]);
     let fields_inner = fields_block.inner(chunks[1]);
 
-    let fields = provider.claude_quick_config_fields();
     let rows_data = fields
         .iter()
         .map(|field| provider_field_label_and_value(provider, *field))
@@ -535,7 +571,7 @@ fn render_claude_quick_config_form(
 
     let mut state = TableState::default();
     if !fields.is_empty() {
-        state.select(Some(provider.claude_quick_config_idx.min(fields.len() - 1)));
+        state.select(Some(selected_idx.min(fields.len() - 1)));
     }
     frame.render_stateful_widget(table, fields_inner, &mut state);
 }
@@ -1297,6 +1333,11 @@ pub(crate) fn provider_field_label_and_value(
             texts::tui_label_claude_fallback_model().to_string()
         }
         ProviderAddField::ClaudeQuickConfig => texts::tui_label_claude_quick_config().to_string(),
+        ProviderAddField::CodexQuickConfig => texts::tui_label_codex_quick_config().to_string(),
+        ProviderAddField::CodexGoalMode => texts::tui_label_codex_goal_mode().to_string(),
+        ProviderAddField::CodexRemoteCompaction => {
+            texts::tui_label_codex_remote_compaction().to_string()
+        }
         ProviderAddField::ClaudeHideAttribution => {
             texts::tui_label_claude_hide_attribution().to_string()
         }
@@ -1374,6 +1415,24 @@ pub(crate) fn provider_field_label_and_value(
         }
         ProviderAddField::ClaudeQuickConfig => {
             texts::tui_claude_quick_config_summary(provider.claude_quick_config_enabled_count())
+        }
+        ProviderAddField::CodexQuickConfig => texts::tui_codex_quick_config_summary(
+            provider.codex_quick_config_enabled_count(),
+            provider.codex_quick_config_fields().len(),
+        ),
+        ProviderAddField::CodexGoalMode => {
+            if provider.codex_goal_mode {
+                format!("[{}]", texts::tui_marker_active())
+            } else {
+                "[ ]".to_string()
+            }
+        }
+        ProviderAddField::CodexRemoteCompaction => {
+            if provider.codex_remote_compaction {
+                format!("[{}]", texts::tui_marker_active())
+            } else {
+                "[ ]".to_string()
+            }
         }
         ProviderAddField::ClaudeHideAttribution => {
             if provider.claude_hide_attribution {
@@ -1507,6 +1566,27 @@ pub(crate) fn provider_field_editor_line(
                 texts::tui_claude_model_config_open_hint().to_string()
             }
             ProviderAddField::ClaudeQuickConfig => texts::tui_form_open_page_hint().to_string(),
+            ProviderAddField::CodexQuickConfig => texts::tui_form_open_page_hint().to_string(),
+            ProviderAddField::CodexGoalMode => {
+                format!(
+                    "features.goals = {}",
+                    if provider.codex_goal_mode {
+                        "true"
+                    } else {
+                        "<unset>"
+                    }
+                )
+            }
+            ProviderAddField::CodexRemoteCompaction => {
+                format!(
+                    "model_providers.<id>.name = {}",
+                    if provider.codex_remote_compaction {
+                        "\"OpenAI\""
+                    } else {
+                        "<provider>"
+                    }
+                )
+            }
             ProviderAddField::ClaudeHideAttribution => {
                 format!(
                     "attribution.commit/pr = {}",

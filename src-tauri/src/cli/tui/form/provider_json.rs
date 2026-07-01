@@ -142,10 +142,19 @@ impl ProviderAddFormState {
                         .get("config")
                         .and_then(|value| value.as_str())
                         .unwrap_or("");
-                    let cleaned_config =
+                    let mut cleaned_config =
                         crate::codex_config::strip_codex_provider_config_text(existing_config)
                             .map_err(|_| ())
                             .unwrap_or_else(|_| existing_config.trim().to_string());
+                    // Goal mode is a top-level [features] setting, so it applies
+                    // to official providers too (remote compaction is custom-only
+                    // and its toggle is hidden here, hence not applied).
+                    if self.codex_goal_mode_touched {
+                        cleaned_config = crate::codex_config::set_codex_goal_mode(
+                            &cleaned_config,
+                            self.codex_goal_mode,
+                        );
+                    }
                     settings_obj.insert("config".to_string(), Value::String(cleaned_config));
 
                     let auth_value = settings_obj
@@ -191,7 +200,7 @@ impl ProviderAddFormState {
                     } else {
                         existing_config.to_string()
                     };
-                    let config_toml = update_codex_config_snippet(
+                    let mut config_toml = update_codex_config_snippet(
                         &base_config,
                         base_url,
                         model,
@@ -199,6 +208,26 @@ impl ProviderAddFormState {
                         self.codex_requires_openai_auth,
                         self.codex_env_key.value.trim(),
                     );
+                    // Quick-config toggles rewrite the config TOML in place,
+                    // mirroring upstream's CodexConfigSections. Only touched
+                    // toggles change the config so existing keys are preserved.
+                    if self.codex_goal_mode_touched {
+                        config_toml = crate::codex_config::set_codex_goal_mode(
+                            &config_toml,
+                            self.codex_goal_mode,
+                        );
+                    }
+                    if self.codex_remote_compaction_touched {
+                        // Empty fallback → the helper restores `name` to the
+                        // config's own active `model_provider` id (CC-Switch's
+                        // default name), which is correct even when the imported
+                        // config's provider id differs from our cleaned key.
+                        config_toml = crate::codex_config::set_codex_remote_compaction(
+                            &config_toml,
+                            self.codex_remote_compaction,
+                            "",
+                        );
+                    }
                     settings_obj.insert("config".to_string(), Value::String(config_toml));
                     if !model_catalog.is_empty() {
                         settings_obj.insert(

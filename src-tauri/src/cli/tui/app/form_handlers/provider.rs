@@ -61,6 +61,9 @@ impl App {
         if matches!(provider.page, form::ProviderFormPage::ClaudeQuickConfig) {
             return self.handle_claude_quick_config_page_key(key, data);
         }
+        if matches!(provider.page, form::ProviderFormPage::CodexQuickConfig) {
+            return self.handle_codex_quick_config_page_key(key, data);
+        }
 
         match provider.focus {
             FormFocus::Fields => self.handle_provider_fields_key(key, data),
@@ -316,6 +319,27 @@ impl App {
                 provider.open_claude_quick_config_page();
                 Action::None
             }
+            ProviderAddField::CodexQuickConfig => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return Action::None;
+                };
+                provider.open_codex_quick_config_page();
+                Action::None
+            }
+            ProviderAddField::CodexGoalMode => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return Action::None;
+                };
+                provider.toggle_codex_goal_mode();
+                Action::None
+            }
+            ProviderAddField::CodexRemoteCompaction => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return Action::None;
+                };
+                provider.toggle_codex_remote_compaction();
+                Action::None
+            }
             ProviderAddField::ClaudeHideAttribution => {
                 let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
                     return Action::None;
@@ -491,6 +515,50 @@ impl App {
                 };
                 provider.claude_quick_config_idx =
                     (provider.claude_quick_config_idx + 1).min(fields.len() - 1);
+                Some(Action::None)
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                Some(self.handle_provider_field_activate(selected, key, data))
+            }
+            _ => None,
+        }
+    }
+
+    fn handle_codex_quick_config_page_key(
+        &mut self,
+        key: KeyEvent,
+        data: &UiData,
+    ) -> Option<Action> {
+        let (fields, selected) = {
+            let Some(FormState::ProviderAdd(provider)) = self.form.as_ref() else {
+                return None;
+            };
+            let fields = provider.codex_quick_config_fields();
+            let selected = provider.selected_codex_quick_config_field()?;
+            (fields, selected)
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return None;
+                };
+                provider.close_codex_quick_config_page();
+                Some(Action::None)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return None;
+                };
+                provider.codex_quick_config_idx = provider.codex_quick_config_idx.saturating_sub(1);
+                Some(Action::None)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return None;
+                };
+                provider.codex_quick_config_idx =
+                    (provider.codex_quick_config_idx + 1).min(fields.len() - 1);
                 Some(Action::None)
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
