@@ -7,6 +7,38 @@ All notable changes to CC Switch CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.7] - 2026-07-02
+
+### Added
+
+- **Providers / Sponsors**: Add the Qiniu (七牛云 AI) and Fenno.ai sponsor presets across the supported apps (Claude, Codex, Gemini/OpenCode/OpenClaw/Hermes as applicable), wired into both the flag-driven CLI (`provider add --template qiniu|fenno`) and the TUI add-provider form.
+- **CLI / Provider Add**: Make `provider add` fully non-interactive and flag-driven (`--name`, `--id`, `--base-url`, `--api-key`, `--model`, `--config`/`--config-file`, `--api-format`, `--common-config`, `--account-id`, and more). Interactive add now lives only in the TUI.
+- **TUI / Claude Quick Config**: Collapse the Claude quick toggles into a "快捷配置菜单" sub-page with hide-AI-attribution, Teammates 模式 (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`), 启用 Tool Search (`ENABLE_TOOL_SEARCH`), and 禁用自动升级 (`DISABLE_AUTOUPDATER`) toggles.
+- **TUI / Codex Quick Config**: Add a Codex "快捷配置菜单" sub-page with 启用 Goal mode (`[features] goals`) and 启用远程压缩 toggles, both written via format-preserving `toml_edit`.
+- **TUI / Claude Advanced Options**: Add an always-visible advanced-options section with a 默认兜底模型 (`ANTHROPIC_MODEL`) row, a relabeled 模型映射 sub-page limited to the four role models, and per-row help.
+- **Codex / Provider Form**: Decouple the upstream format (Chat Completions vs native Responses) from model mapping and reasoning, add a working native Responses model catalog, and edit the model-mapping catalog inline.
+
+### Changed
+
+- **TUI / Provider List**: Remove the separate provider detail view; Enter now opens the edit form directly (respecting read-only).
+- **Providers / Sponsor Order**: Reorder sponsor presets — Cubence now appears before PackyCode, and RunAPI sits right after Fenno.ai — across the README sponsor tables and the provider-add chip lists.
+
+### Fixed
+
+- **Proxy / Streaming**: Emit a spec-complete `message_start` snapshot (`content: []`, `stop_reason: null`, `stop_sequence: null`) across all six transform paths (OpenAI Chat, OpenAI Responses, Gemini). Omitting these fields crashed the official `@anthropic-ai/sdk` stream accumulator, forcing clients into per-turn non-streaming fallback (double billing) or silently terminating agent sessions mid-task. [#320](https://github.com/SaladDay/cc-switch-cli/pull/320)
+- **TUI / Terminal Colors**: Prefer Ansi256 for a bare `TERM=xterm` with no truecolor signal (e.g. Xshell 8), so terminals that do not reliably support 24-bit color no longer render wrong colors. `xterm-256color`, explicit `COLORTERM=truecolor`/`24bit`, and the `CC_SWITCH_COLOR_MODE` override stay on the truecolor path. Fixes [#314](https://github.com/SaladDay/cc-switch-cli/issues/314) and [#60](https://github.com/SaladDay/cc-switch-cli/issues/60). [#319](https://github.com/SaladDay/cc-switch-cli/pull/319)
+- **TUI / Provider Form**: Restrict `Ctrl+S` save to the outermost form page (sub-pages no longer submit early), replace confusing "open" value cells with an "按 Enter 打开…" help hint, and place the Codex 快捷配置菜单 below the common-config controls to match the Claude layout.
+
+### Thanks
+
+Thanks to everyone who helped land this release:
+
+- Code & PRs: [@lishuceo](https://github.com/lishuceo) (proxy streaming `message_start` fix), [@mvanhorn](https://github.com/mvanhorn) (terminal color detection), [@SaladDay](https://github.com/SaladDay)
+- Reports & diagnosis: [@QQuan930](https://github.com/QQuan930), [@zenpuhls](https://github.com/zenpuhls) (TUI display corruption on remote terminals), [@leetomlee123](https://github.com/leetomlee123) (intermittent mid-session drops)
+- Thanks [@farion1231](https://github.com/farion1231) for the upstream cc-switch direction that the Claude/Codex quick-config, advanced-options, and provider-form reworks follow.
+- Thanks Qiniu (七牛云 AI) and Fenno.ai for sponsoring the project.
+- Thanks to every contributor who reported issues, tested the TUI/proxy changes, reviewed behavior, or helped diagnose problems.
+
 ## [5.8.6] - 2026-06-29
 
 ### Added
