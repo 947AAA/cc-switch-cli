@@ -163,6 +163,14 @@ impl Database {
         let temp_conn =
             Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 在建表前把临时库设为增量 auto-vacuum。稍后用 SQLite Backup 把临时库整体
+        // 写回主库时会连同数据库头（含 auto_vacuum 模式）一起复制，因此这一步能保证
+        // 导入 / WebDAV 下载后主库仍保持 INCREMENTAL——否则临时库默认的 NONE 会被写回
+        // 主库，令 issue #327 的膨胀问题在每次同步后复发。
+        temp_conn
+            .execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
         temp_conn
             .execute_batch(sql_content)
             .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
@@ -1053,6 +1061,54 @@ mod tests {
         assert!(
             !temp.path().join(".cc-switch").join("backups").exists(),
             "importing into an in-memory database must not back up the process-global database"
+        );
+
+        Ok(())
+    }
+
+    /// issue #327 回归：SQL 导入 / WebDAV 下载通过 SQLite Backup 把临时库整体写回
+    /// 主库，会连数据库头一起复制。若临时库是默认的 auto_vacuum=NONE，主库就会被
+    /// 重置回 NONE，令膨胀问题在每次同步后复发。修复后主库应始终保持 INCREMENTAL。
+    #[test]
+    fn sync_import_keeps_main_database_incremental_auto_vacuum() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let _env = crate::test_support::TestEnvGuard::isolated(temp.path());
+
+        let local_db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            assert_eq!(
+                Database::get_auto_vacuum_mode(&conn)?,
+                2,
+                "freshly initialized db should already be INCREMENTAL"
+            );
+        }
+
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            seed_provider(&conn, "remote-provider")?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+
+        // 写回主库后（内存连接视角）仍应为 INCREMENTAL。
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            assert_eq!(
+                Database::get_auto_vacuum_mode(&conn)?,
+                2,
+                "auto_vacuum must remain INCREMENTAL after sync import"
+            );
+        }
+
+        // 以原始连接直接读磁盘（不经 Database::init 的迁移），确认已持久化。
+        let db_path = crate::database::database_path()?;
+        let raw = Connection::open(&db_path).expect("reopen db file");
+        assert_eq!(
+            Database::get_auto_vacuum_mode(&raw)?,
+            2,
+            "auto_vacuum must persist as INCREMENTAL on disk after import"
         );
 
         Ok(())
