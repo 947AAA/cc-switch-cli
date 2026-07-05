@@ -129,6 +129,11 @@ fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
 
 /// For Codex Chat providers, ensure the request uses the configured upstream
 /// model before converting the request to Chat Completions.
+///
+/// Model masquerading: if a catalog entry has an `upstream_model` field,
+/// the request model is replaced with that upstream model before forwarding.
+/// This allows Codex to see friendly model names (e.g. "gpt-5.5") while the
+/// upstream receives the actual model (e.g. "deepseek-v4-flash").
 pub fn apply_codex_chat_upstream_model(
     provider: &Provider,
     body: &mut JsonValue,
@@ -145,6 +150,10 @@ pub fn apply_codex_chat_upstream_model(
         .filter(|model| !model.is_empty())
     {
         if catalog_model_ids.contains(request_model) {
+            if let Some(mapped) = find_catalog_upstream_model(provider, request_model) {
+                body["model"] = JsonValue::String(mapped.to_string());
+                return Some(mapped.to_string());
+            }
             return Some(request_model.to_string());
         }
     }
@@ -152,6 +161,30 @@ pub fn apply_codex_chat_upstream_model(
     let upstream_model = codex_provider_upstream_model(provider)?;
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
+}
+
+/// If a catalog entry for `request_model` has an `upstream_model` field, return it.
+/// The catalog model ID is used only for Codex UI display; the upstream request
+/// should use `upstream_model` instead.
+fn find_catalog_upstream_model<'a>(provider: &'a Provider, request_model: &str) -> Option<&'a str> {
+    let models = provider
+        .settings_config
+        .get("modelCatalog")?
+        .get("models")?
+        .as_array()?;
+    for entry in models {
+        let model = entry.get("model")?.as_str()?;
+        if model == request_model {
+            if let Some(upstream) = entry.get("upstream_model") {
+                let mapped = upstream.as_str()?;
+                if !mapped.is_empty() {
+                    return Some(mapped);
+                }
+            }
+            return None;
+        }
+    }
+    None
 }
 
 pub fn resolve_codex_chat_reasoning_config(
